@@ -69,7 +69,7 @@ def main():
         print(f"error: not a file: {path}", file=sys.stderr)
         sys.exit(2)
 
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     frontmatter, problem_side, has_sep = split_note(text)
 
     out = []

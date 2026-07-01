@@ -106,7 +106,7 @@ def parse_frontmatter(fm: str):
 
 def index_note(path: Path, vault_root: Path):
     """Return an index record for a problem note, or None if not one."""
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     frontmatter, problem_side, has_sep = split_note(text)
     if not has_sep:
         return None  # not a problem note
