@@ -164,8 +164,9 @@ def main():
         print(f"error: not a directory: {vault_root}", file=sys.stderr)
         sys.exit(2)
 
-    # Default excludes: Obsidian internals and the imported-source folder.
-    default_excludes = [".obsidian", ".trash", "Attachments"]
+    # Default excludes: Obsidian internals, the imported-source folder, and the
+    # basic-memory cross-app layer (kept separate from the vault problem index).
+    default_excludes = [".obsidian", ".trash", "Attachments", "memory"]
     exclude_norm = [e.replace("\\", "/").strip("/")
                     for e in (excludes + default_excludes)]
 

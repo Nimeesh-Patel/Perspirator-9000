@@ -5,6 +5,9 @@ description: >-
   notes. Read modes: draw implications, surface assumptions, hunt
   conflicts. Write modes (additive only): ingest a source into new
   problem notes, connect existing notes, file a conflict as a new note.
+  Bridge modes: export relevant vault context into the basic-memory
+  cross-app memory folder, and promote memory notes back into vault
+  problem notes.
 ---
 
 # Perspiration over an Obsidian vault
@@ -345,4 +348,82 @@ a defect to auto-resolve.
    from both -- so you do NOT edit either conflicting note.
 3. **Do NOT resolve the conflict, do NOT edit the two notes' prose.** Log
    and report.
+
+---
+
+## The bridge to basic-memory (the cross-app `memory` folder)
+
+`basic-memory` (bm) maintains a **cross-app memory**: markdown notes in
+`<vault>/memory` that ChatGPT, Claude, Codex, and Claude Code can all
+read/write through bm's MCP tools (`search_notes`, `read_note`,
+`write_note`, `edit_note`, `build_context`, `recent_activity`). bm is
+scoped to that folder ONLY -- it does not see the rest of the vault. So the
+rest of the vault reaches the other apps *only* through what Perspirator
+writes into `memory`. Modes 7 and 8 are that bridge.
+
+Keep the two populations distinct:
+- **Vault problem notes** = the canonical corpus (the `***` notes). Only
+  local agents over the vault can read them.
+- **Memory notes** = the shared *working layer*, readable by every app.
+  They need NOT be `***` problem notes. `problem_index.py` excludes the
+  `memory` folder, so memory notes never enter the vault problem index and
+  the two never double-index.
+
+Use bm's MCP tools for the memory side; use the Obsidian CLI + the problem
+index for the vault side. The additive/dedup/human-disposes invariants hold
+in both directions.
+
+### Mode 7 -- Context export (vault -> memory)
+
+Trigger: "brief memory on <problem>" / "load context for <X> into memory".
+
+Perspirator is the filter deciding what vault context is worth surfacing to
+the other apps. Gather it, write it as a memory note the web apps can see.
+
+1. **Gather the neighbourhood.** Run the traversal loop (as in Modes 1/3)
+   over the vault for the target problem: `search:context` to seed, the
+   cheap problem-side pass, expand along links/backlinks, pull only the
+   conjectures that clear the bar.
+2. **Dedup against MEMORY, not the vault.** bm `search_notes` for an
+   existing memory note on this problem. If one exists, plan to AUGMENT it
+   (`edit_note`), never duplicate.
+3. **Draft the brief.** A memory note stating: the problem, the relevant
+   conjectures the user already holds (each citing its vault note by
+   `[[name]]`), and the open sub-problems. Self-contained enough that an
+   app WITHOUT vault access understands it, but linking back for the local
+   agents. A context brief, not a problem note -- no `***` required.
+4. **Propose, then write.** Show the brief first. On approval, create it
+   with bm `write_note` (`folder: "."` -> lands in `<vault>/memory`), or
+   augment the matched note with `edit_note`. Give it a stable, searchable
+   title.
+5. **Log + report.** Append to the perspirate log: the memory note
+   created/augmented and the vault notes it draws from. The vault side stays
+   read-only in this mode.
+
+### Mode 8 -- Promotion (memory -> vault)
+
+Trigger: "promote memory" / "what in memory deserves a vault note?".
+
+Cross-app work can deposit knowledge in `memory` that the vault lacks.
+Promote the durable parts into proper problem notes -- treating the memory
+note as a SOURCE, i.e. Mode 4 Ingest with the source read from bm.
+
+1. **Read the source.** bm `read_note` the memory note(s) in question (or
+   `recent_activity` to find memory notes changed since the last
+   promotion).
+2. **Run Mode 4 Ingest against the VAULT.** Extract the DISTINCT open
+   problems and their conjectures the memory note contains. Refresh
+   `problem_index.py`; dedup each against the vault (index problem-sides +
+   `obsidian search:context`).
+3. **Propose, then create.** Show the plan (per problem: title, drafted
+   conjecture, NEW vs. matches `[[X]]`, outbound links). On approval,
+   `obsidian create` the NEW problem notes with the vault's frontmatter
+   conventions and `***`; augment dedup hits via Mode 5's additive append.
+   All additive, no `overwrite`.
+4. **Leave memory intact.** Promotion COPIES knowledge into the vault; it
+   does not delete the memory note (memory is the working layer, the vault
+   is the record). Optionally `edit_note` the memory note to add a `[[link]]`
+   to the new vault note, cross-referencing the two.
+5. **Log + report** as in Ingest. The human disposes: Perspirator proposes
+   the promotions; the user approves what earns a place in the vault.
 
