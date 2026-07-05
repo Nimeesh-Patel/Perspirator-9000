@@ -7,7 +7,8 @@ assumptions explicit, computing consequences across linked ideas, finding
 conflicts between conjectures that sit too far apart in the link graph to
 notice by hand — and, in its write modes, ingesting sources into new
 problem notes, connecting existing notes, and filing conflicts as new
-notes. **The agent does the perspiration; you keep the inspiration.**
+notes. Its bridge modes exchange curated context with a cross-app shared
+memory. **The agent does the perspiration; you keep the inspiration.**
 
 A *problem note* is any note containing a line that is exactly `***`:
 above it the open problem, below it the current best conjecture. Both
@@ -23,9 +24,9 @@ itself up.
 
 | File | Role |
 |------|------|
-| `SKILL.md` | The skill itself — philosophy, tools, traversal loop, and all six modes. The single source of truth for behavior. Contains a `{{COMMANDS_DIR}}` placeholder the installer resolves. |
+| `SKILL.md` | The skill itself — philosophy, tools, traversal loop, and all eight modes. The single source of truth for behavior. Contains a `{{COMMANDS_DIR}}` placeholder the installer resolves. |
 | `problem_half.py` | Returns frontmatter + the problem side (above the first `***`) of a note, for cheap relevance routing. |
-| `problem_index.py` | Builds a derived, disposable index of every problem note (name, problem-side, category, `up:`, outbound links, stub flag). Read by the write modes to dedup before creating and to find what to link. |
+| `problem_index.py` | Builds a derived, disposable index of every problem note (name, problem-side, category, `up:`, outbound links, stub flag). Read by the write modes to dedup before creating and to find what to link. Excludes the vault's `memory/` folder so bridge notes never enter the problem index. |
 | `install.sh` / `install.ps1` | Deploy the skill + scripts into an agent's commands directory, substituting the real path for `{{COMMANDS_DIR}}`. |
 | `AGENTS.md` | Pointer for agents (Codex and others) that auto-read it: read this README, then run the installer. |
 | `CLAUDE.md` | The epistemic approach this project follows (Popper / Deutsch). |
@@ -114,6 +115,27 @@ All modes are driven by how you prompt the skill.
 - **Conflict write-back** — when conflict-hunting finds a conflict, files
   it as a new problem note linking the two conjectures, leaving the
   resolution to you.
+
+**Bridge modes** (connect the vault to a cross-app shared memory):
+
+These modes assume a [basic-memory](https://github.com/basicmachines-co/basic-memory)
+project scoped to a `memory/` subfolder of the vault, shared as an MCP server
+with other AI apps (ChatGPT, Claude web, Codex, Claude Code). The vault's
+problem notes and the memory notes are two deliberately separate populations:
+bm never indexes the vault outside `memory/`, and `problem_index.py` excludes
+`memory/`. These modes are the only crossing point. (The memory system's own
+infrastructure — the MCP wiring, remote access for the web apps, operations —
+is documented in its own repo, `basic-memory-remote`.)
+
+- **Context export (Mode 7)** — "brief memory on [[X]]." Gathers the relevant
+  vault neighbourhood of a problem and writes a curated brief into `memory/`,
+  so the other apps can see the vault's current state of that problem without
+  ever touching the vault. Augments an existing brief rather than duplicating.
+- **Promotion (Mode 8)** — "promote memory." Treats a memory note (progress
+  made in another app) as a source: extracts the durable problems and
+  conjectures and promotes them into proper problem notes, dedup'd and
+  additive, under the same invariants as Ingest. The memory note stays —
+  memory is the working layer, the vault is the record.
 
 ---
 
