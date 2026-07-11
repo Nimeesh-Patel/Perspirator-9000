@@ -1,429 +1,88 @@
 ---
 name: perspirate
 description: >-
-  Perspiration over an Obsidian vault of Popperian/Deutschian problem
-  notes. Read modes: draw implications, surface assumptions, hunt
-  conflicts. Write modes (additive only): ingest a source into new
-  problem notes, connect existing notes, file a conflict as a new note.
-  Bridge modes: export relevant vault context into the basic-memory
-  cross-app memory folder, and promote memory notes back into vault
-  problem notes.
+  Bootstrap for Perspirator: the agentic interface to Nimeesh's Obsidian
+  vault of Popperian/Deutschian problem notes. Loads the canonical
+  runtime from the vault (memory/perspirator/Perspirator.md) at the start
+  of every task and follows it — implications, assumptions, conflicts,
+  ingest/connect/write-back, and basic-memory bridge modes are all
+  defined there, not here.
 ---
 
-# Perspiration over an Obsidian vault
+# Perspirator bootstrap
 
-A skill for doing the "99% perspiration" over a vault of problem notes:
-drawing out implications, surfacing hidden assumptions, computing
-consequences across linked ideas, and — most importantly — finding
-conflicts between conjectures that sit too far apart in the link graph
-for the author to have noticed.
+This file is deliberately small and stable. It contains **no reasoning
+policy**. The active operating instructions live in the vault, are
+editable there by Nimeesh, and are loaded fresh at the start of every
+Perspirator task — an edit to the runtime changes the next run with no
+redeployment.
 
-This skill operates through the **Obsidian CLI** (desktop only; Obsidian
-must be running) plus two helper scripts, `problem_half.py` (read) and
-`problem_index.py` (a derived map of the vault, used by the write modes).
+(Path placeholders: `{{VAULT_PATH}}` is the Obsidian vault root and
+`{{COMMANDS_DIR}}` is where the helper scripts live. The installers
+substitute real absolute paths; if you are reading this file raw from the
+repo, resolve the vault root via `obsidian vault info=path` and treat
+`{{COMMANDS_DIR}}` as this repo's directory.)
 
----
-
-## The philosophy this skill enforces
-
-The user follows Popper and Deutsch. The work is *perspiration*, not
-inspiration. Concretely, when running this skill you:
-
-1. **Reject blind empiricism.** Use explanatory arguments to draw
-   conclusions, not "the data suggests." Reach and explanatory depth
-   are the currency, not correlation or precedent.
-2. **Treat every note as a conjecture in an evolving theory** — fallible,
-   improvable, and connected to other conjectures.
-3. **Do the perspiration:**
-   - Draw out implications as far as they go.
-   - Make inexplicit, implicit, and unconscious assumptions explicit.
-   - Compute consequences across the whole web of linked ideas.
-4. **When you find a conflict, state it as a precise problem or question.
-   DO NOT give advice. DO NOT resolve it.** The user does the inspiration
-   / knowledge-creation step. Your job ends at naming the conflict
-   sharply enough that it becomes a workable problem.
-5. **Style:** hard-to-vary answers. No redundancy, no rambling, no
-   hedging padding. Every sentence should carry weight that couldn't
-   trivially be otherwise.
-
-The single highest-value thing this skill produces is a **conflict
-between two conjectures the user holds but has never seen side by side**,
-stated as a precise problem. Hunt for those.
-
----
-
-## Vault model
-
-- A **problem note** is any note whose body contains a line that is
-  exactly `***`. Above `***` is a problem situation / open question;
-  below is the current best conjecture. Both sides evolve.
-- Notes are connected by `[[wikilinks]]`. The link graph is the topology
-  of problems — follow it, don't traverse blindly.
-- Frontmatter may carry `collection:`, `up:`, `category:`, `tags:`.
-  `up:` often points to a parent problem; treat it as a strong edge.
-
----
-
-## Tools
-
-`{{COMMANDS_DIR}}` below is the directory the helper scripts are installed
-in (for Claude Code: `~/.claude/commands`). `install.sh` / `install.ps1`
-substitute the real absolute path when they deploy this skill; if you read
-this file raw, read `{{COMMANDS_DIR}}` as "wherever the scripts live."
-
-### The helper: `problem_half.py`
-
-Returns frontmatter + the problem side (above the first `***`) of a note,
-without the conjecture. Use it for cheap relevance routing — reading the
-problem side is much cheaper than the whole note, and the problem alone
-is usually enough to decide whether a note is relevant.
+## 1. Locate the canonical runtime
 
 ```
-python "{{COMMANDS_DIR}}/problem_half.py" "<absolute-path-to-note.md>"
+{{VAULT_PATH}}/memory/perspirator/Perspirator.md
 ```
 
-Emits frontmatter + problem text. If the note has no `***` it emits only
-frontmatter (it is not a problem note). Pass `--full-on-miss` to get the
-whole body for non-problem notes when you explicitly want it.
+If that exact path is missing, resolve the vault root with
+`obsidian vault info=path` and look for
+`memory/perspirator/Perspirator.md` under it.
 
-### The index helper: `problem_index.py`
+## 2. Load it — or refuse
 
-A derived, disposable map of every problem note in the vault. The write
-modes (Ingest, Connect, conflict write-back) read it FIRST -- to dedup
-before creating, and to find what to link to. It is never a source of
-truth: markdown is the database, and the index is regenerated by
-re-scanning. If it ever disagrees with the vault, regenerate it.
+Read the whole file at the beginning of every Perspirator task. Check its
+frontmatter says `status: active` and note its `version`. Treat its body
+as the active operating instructions for the task — it supersedes
+anything you remember about how Perspirator used to work.
+
+**If the runtime cannot be found or read, STOP.** Tell the user the
+canonical runtime is unavailable, give the expected path, and do not
+improvise Perspirator behaviour from memory or from this file.
+
+## 3. Structural tools
+
+Helper scripts (Python 3, no dependencies, in `{{COMMANDS_DIR}}`; they
+read the filesystem directly and do not need Obsidian running):
+
+- `problem_half.py "<note path>"` — frontmatter + problem side (above the
+  first `***`); `--full-on-miss` for whole body of non-problem notes.
+- `problem_index.py "<vault-root>" --out "<scratch>.json"` — derived,
+  disposable index of all problem notes (name, path, problem side,
+  category, `up:`, links, stub flag). Write it OUTSIDE the vault; if it
+  disagrees with the vault, regenerate it.
+- `doctor.py` — validates this installation (runtime present and active,
+  dirs, scripts, writability). Run it when anything seems miswired.
+
+Obsidian CLI (desktop, Obsidian running; run `obsidian help` first —
+flags change): `search:context`, `backlinks`, `links`, `read`, `file`,
+`files`, `properties`, `create`, `append`, `vault info=path`.
+
+These tools answer structural questions only. The runtime defines what
+they may decide and what stays semantic judgement.
+
+## 4. Run report
+
+After any substantial traversal or write, write a run report to
 
 ```
-obsidian vault info=path                      # get <vault-root>
-python "{{COMMANDS_DIR}}/problem_index.py" "<vault-root>" --out "<cache>.json"
+{{VAULT_PATH}}/memory/perspirator/runs/YYYY-MM-DD-<slug>.md
 ```
 
-Write `<cache>.json` OUTSIDE the vault (a scratch path), so it never
-pollutes the vault and is thrown away freely. Each record carries:
-`name`, `path`, `problem` (problem-side text), `category`, `up:` parents,
-outbound `links`, and a `stub` flag (empty conjecture side). It indexes
-only notes with a `***`, so imported sources are excluded automatically.
+with the contents the runtime and `runs/README.md` specify. No
+substantial run finishes without one.
 
-### Obsidian CLI commands you will use
+## 5. Authority rule
 
-- `obsidian search:context query="<text>" format=json` — find candidate
-  notes by content, with surrounding lines. Your primary entry search.
-- `obsidian backlinks file="<name>" format=json` — what links TO this
-  note. Incoming edges = problems that depend on this one.
-- `obsidian links file="<name>"` — what this note links OUT to.
-- `obsidian read file="<name>"` — the WHOLE note. Use only when you have
-  decided a note's conjecture side is worth pulling into context.
-- `obsidian file file="<name>"` — path + metadata for a note (use to get
-  the absolute path to feed problem_half.py).
-- `obsidian files folder="<path>"` — enumerate notes in a scope.
-- `obsidian properties file="<name>"` — frontmatter of a note.
-
-Prefer `search:context` and the link commands over reading whole notes.
-Read whole notes (or conjecture sides) only after a note clears the
-relevance bar.
-
-**On `eval`:** the CLI's `eval` runs arbitrary JavaScript in Obsidian's
-runtime. Prefer `problem_half.py` and the structured commands above. Use
-`eval` only if a query genuinely cannot be expressed otherwise, and only
-with code the user can read.
-
----
-
-## The traversal loop (shared by all three modes)
-
-1. **Establish the frontier.** Get an initial set of candidate notes
-   (how depends on mode — see below).
-2. **Cheap relevance pass.** For each candidate, run `problem_half.py`
-   to read only the problem side. Decide relevance from the problem
-   framing alone. Discard the irrelevant cheaply.
-3. **Expand along the graph.** For relevant notes, pull `backlinks` and
-   `links`. Add connected notes to the frontier. Repeat the cheap pass
-   on them. This is breadth-first over the problem topology, not a blind
-   vault scan.
-4. **Pull conjectures selectively.** Only for notes that cleared the bar,
-   `read` the whole note to get the conjecture side. Now you have the
-   problem AND the current best answer for the relevant neighbourhood.
-5. **Perspirate.** Over that neighbourhood:
-   - Draw out implications.
-   - Make assumptions explicit.
-   - Compute consequences across the linked conjectures.
-   - **Look for conflicts**: two conjectures that cannot both be right,
-     a conjecture whose implications contradict another note's problem
-     framing, an assumption one note makes that another note refutes.
-6. **Report.** Per the mode. Conflicts are stated as precise problems,
-   never resolved.
-
-Keep a budget: don't read whole notes you don't need. The problem-side
-pass is there precisely so you can be ruthless about what conjectures
-you pull.
-
----
-
-## The three modes
-
-### Mode 1 — Seeded perspiration
-Trigger: "perspirate on [[X]]" or "what follows from [[X]]".
-- Frontier starts at note X.
-- Expand strictly along X's links and backlinks, 1–2 hops out.
-- Perspirate on X's conjecture in light of its neighbourhood.
-- Output: implications of X's conjecture, hidden assumptions it rests on,
-  and any conflicts between X and the notes it connects to — each stated
-  as a precise problem.
-
-### Mode 2 — Ambient conflict-hunting
-Trigger: "audit my vault for conflicts" / "find contradictions" (optional
-scope: a collection or folder).
-- Frontier is the whole scope (or vault). Enumerate problem notes via
-  `files` + the problem-side pass.
-- Cluster notes by topic proximity (shared links, shared collection,
-  shared tags, `up:` chains).
-- Within and across clusters, look for conjecture pairs that conflict.
-- Output: a list of precise problems, each naming the two notes and the
-  exact nature of the conflict. No resolutions, no advice.
-- This mode is allowed to be slow and to read more conjectures, because
-  finding latent conflicts is the whole point.
-
-### Mode 3 — External-task grounding
-Trigger: an external situation, e.g. "tomorrow I have an interview at
-<company> for <role>, what should I keep in mind?"
-- First, extract the *problems* implicit in the external task (what does
-  this situation actually demand? what questions will it pose?).
-- Use those as search seeds: `search:context` for related problem notes.
-- Run the traversal loop to gather the relevant neighbourhood of the
-  user's own thinking.
-- Perspirate: bring the user's existing conjectures to bear on the
-  external situation — what does the user already believe that applies,
-  what implications follow, what assumptions the situation will test.
-- Surface conflicts between what the situation seems to demand and what
-  the user's notes actually argue — as precise problems.
-- This mode MAY synthesize an answer to the external task (unlike modes
-  1 and 2), but it must still keep conflicts as open problems rather than
-  papering over them, and it must ground claims in the user's own notes
-  (cite note names), not generic advice.
-
----
-
-## Output discipline
-
-- Cite note names so the user can navigate to the source.
-- Separate clearly: (a) implications drawn, (b) assumptions surfaced,
-  (c) conflicts as precise problems.
-- For modes 1 and 2: no advice, no resolutions. Stop at the problem.
-- For mode 3: an answer is allowed, but it must be built from the user's
-  conjectures and must still expose the conflicts rather than hide them.
-- Hard-to-vary: if a sentence could be swapped for its opposite without
-  noticing, cut or sharpen it.
-
----
-
-## Write modes (creating notes and links)
-
-Modes 1-3 are read-only. The modes below CREATE notes and ADD links. They
-exist so the agent does progressively more of the perspiration -- drafting
-conjectures, linking ideas, filing conflicts -- while the human keeps the
-inspiration: deciding what is interesting, criticising the drafts,
-resolving the conflicts. The agent proposes; the human disposes.
-
-### Invariants (hard constraints -- never violate)
-
-- **Additive only.** Never delete or overwrite existing content. Never
-  pass `overwrite` to `obsidian create`. Existing problem/conjecture prose
-  is never modified. (Verified: `create` on an existing name does not
-  clobber -- it makes a numbered sibling -- so the worst case is a stray
-  ` 1` note, never a lost body. Still, dedup so even that does not happen.)
-- **Dedup before create.** Refresh the index and check for an existing
-  matching problem BEFORE creating. If one exists, link/augment it instead
-  of creating a duplicate. A title collision that buried a body is the one
-  corruption path -- prevent it.
-- **Match conventions exactly.** Frontmatter `up:` and `category:` (the
-  dominant field; use `collection:` only when augmenting a note that
-  already uses it). The `***` separator on its own line. Titles phrased as
-  the vault does: an open question ("Can the means of error-correction be
-  created?") or a concept restated ("Counterfactuals"). Learned from the
-  vault, not invented.
-- **No provenance marking.** Drafts are frontmatter-identical to the
-  user's own notes (judge by content, not source). Do NOT add `reviewed:`
-  or draft tags.
-- **Backlinks are derived.** An outbound `[[link]]` from note A makes A
-  appear in B's backlinks automatically. So to connect new->existing you
-  link OUT from the new note; you need NOT edit the existing note.
-- **Reversible + surfaced.** Every write is additive, so undo = delete the
-  new note / remove the appended lines; Obsidian's file history
-  (`obsidian history` / `diff` / `restore`) is the backstop. Surface a diff
-  or summary of every operation for review. (Vault writes stay OUT of the
-  code repo's git history.)
-- **CLI-first.** Run `obsidian help` first; flags change.
-
-### Mode 4 -- Ingest (source -> problem notes + links)
-
-Trigger: the user supplies a SOURCE -- a file path, pasted text, a URL, a
-book / paper / transcript / article.
-
-You are NOT writing a summary or an encyclopedia page. You are extracting
-the **open problems the source raises** and the **conjectures that answer
-them**, in the user's problem-note form. Origin does not matter: a
-conjecture you draft is fine, because the user treats all of it as
-conjecture to be criticised.
-
-1. **Read** the source (WebFetch for URLs, Read for files, the pasted
-   text directly).
-2. **Refresh the index** (see the index helper above).
-3. **Extract problems.** One note per DISTINCT open problem the source
-   raises (not per chapter). For each: a title in the user's style, and a
-   drafted conjecture-side grounded in the source and/or the user's
-   existing conjectures. A conjecture may end on a fresh sub-problem, as
-   the vault's own do.
-4. **Dedup each.** Match the proposed problem against the index's
-   problem-sides, and confirm with `obsidian search:context`. If a close
-   match exists, propose AUGMENTING it (a Connect-style contextual link,
-   Mode 5) instead of creating a duplicate. Surface borderline matches to
-   the user rather than guessing.
-5. **Propose, then write.** Before creating anything, show the user the
-   full plan: for each problem -- title, drafted conjecture, dedup verdict
-   (NEW vs. matches [[X]]), and the outbound links it will carry. The user
-   may edit titles, conjectures, the set, or reject. Discuss first.
-6. **Create (on approval).** For each NEW problem:
-   ```
-   obsidian create name="<title>" content="---\nup:\ncategory: <category>\n---\n<problem>\n***\n<conjecture>"
-   ```
-   No `overwrite`. Pick `<category>` from the categories already in the
-   vault (the index shows the distribution); fall back to `Default`. The
-   conjecture carries inline `[[links]]` to related existing notes and to
-   the other new notes -- these live in the NEW note's own prose, so no
-   existing prose is touched. Aim for no orphans: every new note links out.
-7. **Augment matched notes** (the dedup hits) via Mode 5's additive
-   contextual append -- never by editing their prose.
-8. **Log.** Append to `{{COMMANDS_DIR}}/perspirate-log.md`:
-   ```
-   ## [YYYY-MM-DD HH:MM] ingest | <source>
-   - created: [[<note>]] (links: [[..]], [[..]])
-   - augmented: [[<existing>]] -> [[<new or existing>]]
-   ```
-9. **Report.** What was created, the links added, and the new notes for
-   review. The user criticises; you do not defend.
-
-### Mode 5 -- Connect (additive linking of existing notes)
-
-Trigger: "connect my vault" / "find missing links" (optional scope: a
-folder or collection). This works the backlog of existing notes that sit
-in the same problem-neighbourhood but were never linked.
-
-1. **Refresh the index.** Use it to find pairs of EXISTING notes that are
-   close (shared `category`/`collection`, shared `up:` parent, shared
-   outbound links, or problem-sides about the same question) but not
-   already linked (`B` not in `A.links` and `A` not in `B.links`).
-2. **Propose the pairs** to the user with, for each, the ARGUMENT for the
-   link -- how the two problems relate. Linking is perspiration; deciding a
-   pair is worth it is partly the user's. Surface, let the user prune.
-3. **Append, do not touch prose.** For each approved pair, add the link to
-   ONE side only (backlinks are derived) as a CONTEXTUAL SENTENCE embedding
-   the `[[link]]` -- the relationship stated as an argument, not a bare
-   pointer:
-   ```
-   obsidian append file="<A>" content="\n[[<B>]] <one sentence on how the problems relate>."
-   ```
-   The leading `\n` puts it on its own line after the conjecture; existing
-   problem/conjecture prose is never modified. Example appended to a note
-   on startup growth: `[[Principle of Optimism]] applied to startups:
-   their growth is bounded by how fast they can criticise and fix their
-   own ideas.`
-4. **Idempotent.** Skip any pair already linked (check `A.links`/`B.links`
-   in the index) so re-runs never duplicate.
-5. **Log + report** as in Ingest; surface the appended lines as the diff.
-
-### Mode 6 -- Conflict write-back (extends Mode 2)
-
-When ambient conflict-hunting (Mode 2) finds a conflict between two
-conjectures, Mode 2 states it and stops. On the user's say-so, FILE the
-conflict as a new problem note -- a conflict is a problem to be worked, not
-a defect to auto-resolve.
-
-1. **Create a new note** whose PROBLEM-side states the conflict precisely
-   (which two conjectures, and exactly why they cannot both stand). Leave
-   the conjecture-side empty, or lightly drafted, for the user's
-   inspiration. Same frontmatter conventions; dedup first.
-2. **Link the two conflicting notes** from the new note's own prose
-   (inline `[[A]]` / `[[B]]`). Derived backlinks then surface the new note
-   from both -- so you do NOT edit either conflicting note.
-3. **Do NOT resolve the conflict, do NOT edit the two notes' prose.** Log
-   and report.
-
----
-
-## The bridge to basic-memory (the cross-app `memory` folder)
-
-`basic-memory` (bm) maintains a **cross-app memory**: markdown notes in
-`<vault>/memory` that ChatGPT, Claude, Codex, and Claude Code can all
-read/write through bm's MCP tools (`search_notes`, `read_note`,
-`write_note`, `edit_note`, `build_context`, `recent_activity`). bm is
-scoped to that folder ONLY -- it does not see the rest of the vault. So the
-rest of the vault reaches the other apps *only* through what Perspirator
-writes into `memory`. Modes 7 and 8 are that bridge.
-
-Keep the two populations distinct:
-- **Vault problem notes** = the canonical corpus (the `***` notes). Only
-  local agents over the vault can read them.
-- **Memory notes** = the shared *working layer*, readable by every app.
-  They need NOT be `***` problem notes. `problem_index.py` excludes the
-  `memory` folder, so memory notes never enter the vault problem index and
-  the two never double-index.
-
-Use bm's MCP tools for the memory side; use the Obsidian CLI + the problem
-index for the vault side. The additive/dedup/human-disposes invariants hold
-in both directions.
-
-### Mode 7 -- Context export (vault -> memory)
-
-Trigger: "brief memory on <problem>" / "load context for <X> into memory".
-
-Perspirator is the filter deciding what vault context is worth surfacing to
-the other apps. Gather it, write it as a memory note the web apps can see.
-
-1. **Gather the neighbourhood.** Run the traversal loop (as in Modes 1/3)
-   over the vault for the target problem: `search:context` to seed, the
-   cheap problem-side pass, expand along links/backlinks, pull only the
-   conjectures that clear the bar.
-2. **Dedup against MEMORY, not the vault.** bm `search_notes` for an
-   existing memory note on this problem. If one exists, plan to AUGMENT it
-   (`edit_note`), never duplicate.
-3. **Draft the brief.** A memory note stating: the problem, the relevant
-   conjectures the user already holds (each citing its vault note by
-   `[[name]]`), and the open sub-problems. Self-contained enough that an
-   app WITHOUT vault access understands it, but linking back for the local
-   agents. A context brief, not a problem note -- no `***` required.
-4. **Propose, then write.** Show the brief first. On approval, create it
-   with bm `write_note` (`folder: "."` -> lands in `<vault>/memory`), or
-   augment the matched note with `edit_note`. Give it a stable, searchable
-   title.
-5. **Log + report.** Append to the perspirate log: the memory note
-   created/augmented and the vault notes it draws from. The vault side stays
-   read-only in this mode.
-
-### Mode 8 -- Promotion (memory -> vault)
-
-Trigger: "promote memory" / "what in memory deserves a vault note?".
-
-Cross-app work can deposit knowledge in `memory` that the vault lacks.
-Promote the durable parts into proper problem notes -- treating the memory
-note as a SOURCE, i.e. Mode 4 Ingest with the source read from bm.
-
-1. **Read the source.** bm `read_note` the memory note(s) in question (or
-   `recent_activity` to find memory notes changed since the last
-   promotion).
-2. **Run Mode 4 Ingest against the VAULT.** Extract the DISTINCT open
-   problems and their conjectures the memory note contains. Refresh
-   `problem_index.py`; dedup each against the vault (index problem-sides +
-   `obsidian search:context`).
-3. **Propose, then create.** Show the plan (per problem: title, drafted
-   conjecture, NEW vs. matches `[[X]]`, outbound links). On approval,
-   `obsidian create` the NEW problem notes with the vault's frontmatter
-   conventions and `***`; augment dedup hits via Mode 5's additive append.
-   All additive, no `overwrite`.
-4. **Leave memory intact.** Promotion COPIES knowledge into the vault; it
-   does not delete the memory note (memory is the working layer, the vault
-   is the record). Optionally `edit_note` the memory note to add a `[[link]]`
-   to the new vault note, cross-referencing the two.
-5. **Log + report** as in Ingest. The human disposes: Perspirator proposes
-   the promotions; the user approves what earns a place in the vault.
-
+- A direct edit by Nimeesh to `Perspirator.md` is approved and
+  immediately active.
+- You must NOT edit `Perspirator.md` on your own initiative. If you think
+  the policy should improve, write a proposal file to
+  `{{VAULT_PATH}}/memory/perspirator/proposals/` (format in its README).
+- You may edit the runtime only when Nimeesh explicitly asks you to
+  implement or apply a change — then bump its `version` and record the
+  change in `{{VAULT_PATH}}/memory/perspirator/CHANGELOG.md`.

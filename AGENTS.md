@@ -6,8 +6,10 @@ is how to set it up (for the user, or for yourself).
 ## What this is
 
 Perspirator 9000 is a skill for doing the "99% perspiration" over an
-Obsidian vault of problem notes. The full behavior spec is in `SKILL.md`
-— read it. This file is only the install pointer.
+Obsidian vault of problem notes. `SKILL.md` here is only the **bootstrap**;
+the full behaviour spec is the canonical runtime in the vault at
+`<vault>/memory/perspirator/Perspirator.md`, which the bootstrap loads at
+the start of every task. This file is only the install pointer.
 
 ## Prerequisites to confirm
 
@@ -26,13 +28,19 @@ you are setting up (default is Claude Code's `~/.claude/commands`):
 - Windows PowerShell:
   `pwsh ./install.ps1 [-CommandsDir <dir>]`
 
-The installer copies `problem_half.py` and `problem_index.py` into that
-directory and renders `SKILL.md` into `perspirate.md` there, substituting
-the real absolute script path for the `{{COMMANDS_DIR}}` placeholder.
+The installer copies `problem_half.py`, `problem_index.py` and
+`doctor.py` into that directory and renders `SKILL.md` into
+`perspirate.md` there, substituting real absolute paths for the
+`{{COMMANDS_DIR}}` and `{{VAULT_PATH}}` placeholders (vault defaults to
+`~/nimeesh vault`; override with the installer's vault argument).
 
 If the agent you are configuring has no commands directory, just load
-`SKILL.md` as context directly and read `{{COMMANDS_DIR}}` as "the folder
-the two `.py` scripts live in."
+`SKILL.md` as context directly, read `{{COMMANDS_DIR}}` as "the folder
+the `.py` scripts live in," and resolve `{{VAULT_PATH}}` via
+`obsidian vault info=path`.
+
+After installing, run `python doctor.py` from the repo (or the commands
+dir) to confirm the canonical runtime is reachable and active.
 
 ## After install
 

@@ -14,9 +14,24 @@ A *problem note* is any note containing a line that is exactly `***`:
 above it the open problem, below it the current best conjecture. Both
 sides evolve. It is a thinking artifact, not a Q/A card.
 
-This repo is **self-contained**: the skill, both helper scripts, and the
-installers are all here. Point any agent at this folder and it can set
-itself up.
+Since v1 of the vault runtime (2026-07-10), the skill is split in two:
+
+- **`SKILL.md` here is only a small, stable bootstrap.** It locates the
+  canonical runtime, loads it at the start of every task, points at the
+  structural scripts, requires a run report, and refuses to run if the
+  runtime is unreadable. It contains no reasoning policy.
+- **The semantic runtime lives in the vault** at
+  `<vault>/memory/perspirator/Perspirator.md` — philosophy, traversal,
+  relevance, all eight modes, invariants, and the authority rule. Editing
+  that file in Obsidian changes the next run; no redeployment. Alongside
+  it: `CHANGELOG.md` (approved changes), `proposals/` (agent-suggested
+  changes awaiting Nimeesh), `cases/` (replayable behavioural cases), and
+  `runs/` (inspectable run reports).
+
+This repo is **self-contained** for deployment: the bootstrap, the three
+helper scripts, and the installers are all here. Point any agent at this
+folder and it can set itself up — but the behaviour it will follow is the
+vault's runtime file.
 
 ---
 
@@ -24,10 +39,11 @@ itself up.
 
 | File | Role |
 |------|------|
-| `SKILL.md` | The skill itself — philosophy, tools, traversal loop, and all eight modes. The single source of truth for behavior. Contains a `{{COMMANDS_DIR}}` placeholder the installer resolves. |
+| `SKILL.md` | The **bootstrap only**: locate + load the vault runtime, tool pointers, run-report duty, refusal rule, authority rule. Contains `{{COMMANDS_DIR}}` and `{{VAULT_PATH}}` placeholders the installer resolves. The behaviour itself lives in `<vault>/memory/perspirator/Perspirator.md`. |
 | `problem_half.py` | Returns frontmatter + the problem side (above the first `***`) of a note, for cheap relevance routing. |
 | `problem_index.py` | Builds a derived, disposable index of every problem note (name, problem-side, category, `up:`, outbound links, stub flag). Read by the write modes to dedup before creating and to find what to link. Excludes the vault's `memory/` folder so bridge notes never enter the problem index. |
-| `install.sh` / `install.ps1` | Deploy the skill + scripts into an agent's commands directory, substituting the real path for `{{COMMANDS_DIR}}`. |
+| `doctor.py` | Validates an installation: runtime present/active/versioned, bootstrap points at it, required dirs, scripts discoverable, runs dir writable. |
+| `install.sh` / `install.ps1` | Deploy the bootstrap + scripts into an agent's commands directory, substituting real paths for the placeholders. |
 | `AGENTS.md` | Pointer for agents (Codex and others) that auto-read it: read this README, then run the installer. |
 | `CLAUDE.md` | The epistemic approach this project follows (Popper / Deutsch). |
 
