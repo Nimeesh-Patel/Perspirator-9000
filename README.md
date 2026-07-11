@@ -68,17 +68,21 @@ cd Perspirator-9000
 bash install.sh            # or: pwsh ./install.ps1  (Windows)
 ```
 
-This copies the helper scripts and renders `SKILL.md` into
-`~/.claude/commands/perspirate.md` with the real script path filled in.
-Then, with Obsidian running, invoke `/perspirate` and prompt by mode
-(below).
+This copies the three helper scripts (`problem_half.py`,
+`problem_index.py`, `doctor.py`) and renders `SKILL.md` into
+`~/.claude/commands/perspirate.md` with the real script and vault paths
+filled in. Run `python doctor.py` to verify the canonical runtime is
+reachable, then, with Obsidian running, invoke `/perspirate` and prompt
+by mode (below).
 
-To install into a different commands directory:
+To install into a different commands directory or vault:
 
 ```bash
-bash install.sh /path/to/commands       # POSIX
-pwsh ./install.ps1 -CommandsDir D:\dir   # Windows
+bash install.sh /path/to/commands "/path/to/vault"        # POSIX
+pwsh ./install.ps1 -CommandsDir D:\dir -VaultDir D:\vault  # Windows
 ```
+
+(The vault argument defaults to `~/nimeesh vault`.)
 
 ### Codex / other agents
 
@@ -90,8 +94,8 @@ Two options:
    render `perspirate.md` there with the script path resolved.
 2. **Point the agent directly at `SKILL.md`** in this repo (e.g. include
    it as project context / a system prompt). When reading `SKILL.md`
-   raw, treat `{{COMMANDS_DIR}}` as the folder the two `.py` scripts live
-   in.
+   raw, treat `{{COMMANDS_DIR}}` as the folder the `.py` scripts live
+   in and resolve `{{VAULT_PATH}}` via `obsidian vault info=path`.
 
 ### For an agent setting *itself* up
 
