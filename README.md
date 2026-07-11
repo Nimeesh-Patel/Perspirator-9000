@@ -40,7 +40,7 @@ vault's runtime file.
 | File | Role |
 |------|------|
 | `SKILL.md` | The **bootstrap only**: locate + load the vault runtime, tool pointers, run-report duty, refusal rule, authority rule. Contains `{{COMMANDS_DIR}}` and `{{VAULT_PATH}}` placeholders the installer resolves. The behaviour itself lives in `<vault>/memory/perspirator/Perspirator.md`. |
-| `problem_half.py` | Returns frontmatter + the problem side (above the first `***`) of a note, for cheap relevance routing. |
+| `problem_half.py` | Returns frontmatter + the problem side (above the first `***`) of a note, for cheap relevance routing. Structurally unambiguous: reports `problem-note`, `empty-problem`, `no-separator`, `missing-file`, or `unreadable` (`--json` for the stable machine contract; plain-text stdout is unchanged with the status on stderr). |
 | `problem_index.py` | Builds a derived, disposable index of every problem note (name, problem-side, category, `up:`, outbound links, stub flag). Read by the write modes to dedup before creating and to find what to link. Excludes the vault's `memory/` folder so bridge notes never enter the problem index. |
 | `doctor.py` | Validates an installation: runtime present/active/versioned, bootstrap points at it, required dirs, scripts discoverable, runs dir writable. |
 | `install.sh` / `install.ps1` | Deploy the bootstrap + scripts into an agent's commands directory, substituting real paths for the placeholders. |
@@ -123,7 +123,8 @@ All modes are driven by how you prompt the skill.
   what should I keep in mind, grounded in my notes?" Brings your own
   conjectures to bear on an outside situation.
 
-**Write modes** (additive only — never delete or overwrite; approval-gated):
+**Write modes** (approval-gated; additive toward user-authored notes —
+see the artifact rules below):
 
 - **Ingest** — give it a source (file path, URL, or pasted text). It
   extracts the *open problems* the source raises, drafts a conjecture for
@@ -159,14 +160,35 @@ is documented in its own repo, `basic-memory-remote`.)
 
 ---
 
-## Invariants (what the write modes will never do)
+## Invariants (what the write modes will and won't do)
 
-- Never delete or overwrite existing content. All writing is additive:
-  new notes, or appended lines. Your problem/conjecture prose is never
-  modified.
+The runtime's write rules are **artifact-sensitive** (defined in full in
+`<vault>/memory/perspirator/Perspirator.md`):
+
+- **Protected — user-authored vault knowledge** (your problem/conjecture
+  prose, exact sources, unresolved problems, unique criticisms): never
+  destructively rewritten or deleted by ordinary modes. Writing near it
+  is additive only — new notes or appended lines. Destructive change
+  requires a proposed plan, your explicit approval, and a visible diff.
+- **Mutable — current-facing artifacts** (Basic Memory project
+  summaries, fingerprints, agent-managed briefs): may be replaced or
+  consolidated with explicit approval; a superseded formulation is not
+  kept as a rival current theory.
+- **Disposable — derived artifacts** (stale run reports, closed
+  proposals, redundant audits, indexes, scratch files): deleted once
+  their useful conclusions are incorporated; history alone is not a
+  reason to keep them.
+
+And always:
+
+- A capability preflight before every substantial run: the agent records
+  what it can actually access (Basic Memory, vault filesystem, Obsidian
+  CLI, scripts) and runs fully, degrades explicitly, or refuses — it
+  never implies it consulted a source it could not reach.
 - Always dedup against the index before creating, so a source is never
   turned into a duplicate of a note you already have.
 - Match your vault's conventions (`up:` / `category:` frontmatter, the
   `***` separator, your title style), learned from the vault.
-- Surface a diff for every write. The index is derived and disposable;
-  your markdown is the database.
+- Surface a diff or exact operation summary for every write, replacement,
+  or deletion. The index is derived and disposable; your markdown is the
+  database.

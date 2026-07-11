@@ -50,7 +50,12 @@ Helper scripts (Python 3, no dependencies, in `{{COMMANDS_DIR}}`; they
 read the filesystem directly and do not need Obsidian running):
 
 - `problem_half.py "<note path>"` — frontmatter + problem side (above the
-  first `***`); `--full-on-miss` for whole body of non-problem notes.
+  first `***`). `--json` gives the stable machine contract: a `status`
+  of `problem-note`, `empty-problem`, `no-separator`, `missing-file`, or
+  `unreadable`, plus `frontmatter` and `problem`. Text mode prints the
+  same status on stderr; `--full-on-miss` includes the whole body of
+  non-problem notes. Statuses are structural facts only — relevance
+  stays your judgement.
 - `problem_index.py "<vault-root>" --out "<scratch>.json"` — derived,
   disposable index of all problem notes (name, path, problem side,
   category, `up:`, links, stub flag). Write it OUTSIDE the vault; if it
