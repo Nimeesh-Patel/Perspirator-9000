@@ -1,194 +1,169 @@
 # Perspirator 9000
 
-A Claude Code skill (portable to any coding agent) that does the "99%
-perspiration" over an Obsidian vault of **problem notes** in the
-Popperian / Deutschian tradition: drawing out implications, making hidden
-assumptions explicit, computing consequences across linked ideas, finding
-conflicts between conjectures that sit too far apart in the link graph to
-notice by hand — and, in its write modes, ingesting sources into new
-problem notes, connecting existing notes, and filing conflicts as new
-notes. Its bridge modes exchange curated context with a cross-app shared
-memory. **The agent does the perspiration; you keep the inspiration.**
+Perspirator is an agent-neutral research toolkit for an Obsidian vault of
+Popperian/Deutschian problem notes. It recovers relevant context, follows the
+problem graph selectively, draws explanatory implications, exposes
+assumptions, and states conflicts between conjectures as precise problems.
 
-A *problem note* is any note containing a line that is exactly `***`:
-above it the open problem, below it the current best conjecture. Both
-sides evolve. It is a thinking artifact, not a Q/A card.
+Its architecture has four deliberately separate parts:
 
-Since v1 of the vault runtime (2026-07-10), the skill is split in two:
-
-- **`SKILL.md` here is only a small, stable bootstrap.** It locates the
-  canonical runtime, loads it at the start of every task, points at the
-  structural scripts, requires a run report, and refuses to run if the
-  runtime is unreadable. It contains no reasoning policy.
-- **The semantic runtime lives in the vault** at
-  `<vault>/memory/perspirator/Perspirator.md` — philosophy, traversal,
-  relevance, all eight modes, invariants, and the authority rule. Editing
-  that file in Obsidian changes the next run; no redeployment. Alongside
-  it: `CHANGELOG.md` (approved changes), `proposals/` (agent-suggested
-  changes awaiting Nimeesh), `cases/` (replayable behavioural cases), and
-  `runs/` (inspectable run reports).
-
-This repo is **self-contained** for deployment: the bootstrap, the three
-helper scripts, and the installers are all here. Point any agent at this
-folder and it can set itself up — but the behaviour it will follow is the
-vault's runtime file.
-
----
-
-## What's in this repo
-
-| File | Role |
-|------|------|
-| `SKILL.md` | The **bootstrap only**: locate + load the vault runtime, tool pointers, run-report duty, refusal rule, authority rule. Contains `{{COMMANDS_DIR}}` and `{{VAULT_PATH}}` placeholders the installer resolves. The behaviour itself lives in `<vault>/memory/perspirator/Perspirator.md`. |
-| `problem_half.py` | Returns frontmatter + the problem side (above the first `***`) of a note, for cheap relevance routing. Structurally unambiguous: reports `problem-note`, `empty-problem`, `no-separator`, `missing-file`, or `unreadable` (`--json` for the stable machine contract; plain-text stdout is unchanged with the status on stderr). |
-| `problem_index.py` | Builds a derived, disposable index of every problem note (name, problem-side, category, `up:`, outbound links, stub flag). Read by the write modes to dedup before creating and to find what to link. Excludes the vault's `memory/` folder so bridge notes never enter the problem index. |
-| `doctor.py` | Validates an installation: runtime present/active/versioned, bootstrap points at it, required dirs, scripts discoverable, runs dir writable. |
-| `install.sh` / `install.ps1` | Deploy the bootstrap + scripts into an agent's commands directory, substituting real paths for the placeholders. |
-| `AGENTS.md` | Pointer for agents (Codex and others) that auto-read it: read this README, then run the installer. |
-| `CLAUDE.md` | The epistemic approach this project follows (Popper / Deutsch). |
-
----
-
-## Prerequisites
-
-- **Obsidian 1.12+** with the **Command line interface** enabled
-  (Settings → General → Command line interface) and `obsidian` on your
-  `PATH`. Desktop only; Obsidian must be running with your vault open.
-- **Python 3** (no third-party dependencies).
-
----
-
-## Setup
-
-### Claude Code
-
-```bash
-git clone https://github.com/Nimeesh-Patel/Perspirator-9000.git
-cd Perspirator-9000
-bash install.sh            # or: pwsh ./install.ps1  (Windows)
+```text
+one canonical bootstrap source        repository SKILL.md
++ one structural toolkit              problem_half.py / problem_index.py
++ one canonical vault runtime         memory/perspirator/Perspirator.md
++ thin discovery adapters             Claude Code and Codex locations
 ```
 
-This copies the three helper scripts (`problem_half.py`,
-`problem_index.py`, `doctor.py`) and renders `SKILL.md` into
-`~/.claude/commands/perspirate.md` with the real script and vault paths
-filled in. Run `python doctor.py` to verify the canonical runtime is
-reachable, then, with Obsidian running, invoke `/perspirate` and prompt
-by mode (below).
+The repository owns packaging, structural tools, installers, and validation.
+It is not sufficient by itself: every Perspirator run must load the configured
+vault runtime, and must refuse if that runtime is unavailable. Core behaviour
+lives in the runtime; adapters only make the same bootstrap discoverable.
 
-To install into a different commands directory or vault:
+## Authority and capabilities
 
-```bash
-bash install.sh /path/to/commands "/path/to/vault"        # POSIX
-pwsh ./install.ps1 -CommandsDir D:\dir -VaultDir D:\vault  # Windows
+The active runtime is authoritative for traversal, relevance, modes,
+conflicts, and write-back. This README summarizes it; when the two disagree,
+the runtime wins. Different agents can have different capabilities, so the
+runtime requires a preflight and chooses full execution, an explicitly bounded
+degraded execution, or refusal.
+
+| Capability | What it enables | Universal requirement? |
+|---|---|---|
+| Basic Memory MCP | Cross-app problem map and shared working notes | No; direct `memory/` access can substitute |
+| Direct `memory/` access | Filesystem fallback for the same problem map | No; MCP can substitute |
+| Full-vault filesystem | Problem-note reads and structural traversal | Required only for modes that need the vault |
+| Obsidian CLI | Search context, backlinks, properties, and CLI writes | No; requires Obsidian running when used |
+| Structural scripts | Deterministic note halves and derived indexes | Required when their structural facts are needed |
+| Write access | Run reports and approval-gated write modes | Required only for the relevant write |
+
+`problem_half.py` and `problem_index.py` read Markdown directly and do not need
+Obsidian to be running. Obsidian desktop and its CLI are useful or required for
+the particular capabilities that call them, not for every degraded run.
+
+## Repository files
+
+| File | Responsibility |
+|---|---|
+| `SKILL.md` | Canonical bootstrap template: runtime location/refusal, tool paths, run-report duty, and authority rules. No reasoning policy. |
+| `problem_half.py` | Stable structural contract for extracting the problem half. |
+| `problem_index.py` | Derived, disposable problem-note index; excludes `memory/`. |
+| `doctor.py` | Target-aware validation of runtime, scripts, and adapters. |
+| `install.ps1` / `install.sh` | Render agent-specific discovery adapters from `SKILL.md`. |
+| `EPISTEMIC_METHOD.md` | Small repository-wide epistemic method shared by all agents. |
+| `CLAUDE.md` / `AGENTS.md` | Thin environment pointers, not semantic runtimes. |
+
+Python 3 is the only dependency of the structural toolkit and doctor.
+
+## Claude Code setup
+
+Claude Code discovers project commands at a Claude-specific location. Install
+the rendered command and scripts with:
+
+```powershell
+.\install.ps1 -Target ClaudeCode -VaultDir "C:\path\to\vault"
+python .\doctor.py --target ClaudeCode --vault "C:\path\to\vault"
 ```
 
-(The vault argument defaults to `~/nimeesh vault`.)
+```bash
+./install.sh --target ClaudeCode --vault "/path/to/vault"
+python3 ./doctor.py --target ClaudeCode --vault "/path/to/vault"
+```
 
-### Codex / other agents
+Default destination: `~/.claude/commands/perspirate.md`. Invoke
+`/perspirate`. The adjacent Python files are the structural toolkit. Omitting
+the target retains this historical default, but the installer prints the
+selected target and destination before writing.
 
-These agents don't have Claude Code's `~/.claude/commands` convention.
-Two options:
+## Codex setup
 
-1. **Run the installer** pointed at the agent's own prompt/command
-   directory: `bash install.sh /path/to/that/agents/commands`. It will
-   render `perspirate.md` there with the script path resolved.
-2. **Point the agent directly at `SKILL.md`** in this repo (e.g. include
-   it as project context / a system prompt). When reading `SKILL.md`
-   raw, treat `{{COMMANDS_DIR}}` as the folder the `.py` scripts live
-   in and resolve `{{VAULT_PATH}}` via `obsidian vault info=path`.
+Codex discovers skills as directories containing `SKILL.md`:
 
-### For an agent setting *itself* up
+```powershell
+.\install.ps1 -Target Codex -VaultDir "C:\path\to\vault"
+python .\doctor.py --target Codex --vault "C:\path\to\vault"
+```
 
-If you are an AI agent and the user pointed you at this repo, you can
-install it yourself: read `AGENTS.md`, confirm the prerequisites, run
-`install.sh` (or `install.ps1` on Windows) targeting the correct commands
-directory, and report the next steps to the user. Everything you need is
-in this folder — no external files.
+```bash
+./install.sh --target Codex --vault "/path/to/vault"
+python3 ./doctor.py --target Codex --vault "/path/to/vault"
+```
 
----
+Default destination: `~/.agents/skills/perspirate/SKILL.md`. The installer
+creates the complete `perspirate/` skill directory and places the same three
+Python files beside the rendered bootstrap. Invoke the `perspirate` skill by
+name or by a request matching its description.
 
-## Use
+## Combined and custom setup
 
-All modes are driven by how you prompt the skill.
+`All` installs both first-class adapters from the same source:
 
-**Read modes** (read-only; never write):
+```powershell
+.\install.ps1 -Target All -VaultDir "C:\path\to\vault"
+python .\doctor.py --target All --vault "C:\path\to\vault"
+```
 
-- **Seeded** — `perspirate on [[Deutsch's Law]]` / "what follows from
-  [[X]]?" Draws implications, surfaces assumptions, and names conflicts
-  between X and its neighbourhood.
-- **Conflict-hunt** — "audit my Epistemology collection for conflicts."
-  Hunts for conjecture pairs that can't both stand, stated as precise
-  problems. No resolutions.
-- **External task** — "tomorrow I interview at example.com for a PM role —
-  what should I keep in mind, grounded in my notes?" Brings your own
-  conjectures to bear on an outside situation.
+```bash
+./install.sh --target All --vault "/path/to/vault"
+python3 ./doctor.py --target All --vault "/path/to/vault"
+```
 
-**Write modes** (approval-gated; additive toward user-authored notes —
-see the artifact rules below):
+For an unsupported agent, `Custom` requires an explicit destination and
+renders a generic `SKILL.md` there without claiming that directory follows
+Claude Code or Codex conventions:
 
-- **Ingest** — give it a source (file path, URL, or pasted text). It
-  extracts the *open problems* the source raises, drafts a conjecture for
-  each as new problem notes, dedups against your vault, and links them in.
-- **Connect** — "connect my vault" / "find missing links." Appends
-  contextual links between existing notes that belong together but aren't
-  linked — each link stated as an *argument* for the relationship, never
-  touching your existing prose.
-- **Conflict write-back** — when conflict-hunting finds a conflict, files
-  it as a new problem note linking the two conjectures, leaving the
-  resolution to you.
+```powershell
+.\install.ps1 -Target Custom -Destination "D:\agent prompts" -VaultDir "D:\vault"
+python .\doctor.py --target Custom --custom-dir "D:\agent prompts" --vault "D:\vault"
+```
 
-**Bridge modes** (connect the vault to a cross-app shared memory):
+```bash
+./install.sh --target Custom --destination "/agent/prompts" --vault "/vault"
+python3 ./doctor.py --target Custom --custom-dir "/agent/prompts" --vault "/vault"
+```
 
-These modes assume a [basic-memory](https://github.com/basicmachines-co/basic-memory)
-project scoped to a `memory/` subfolder of the vault, shared as an MCP server
-with other AI apps (ChatGPT, Claude web, Codex, Claude Code). The vault's
-problem notes and the memory notes are two deliberately separate populations:
-bm never indexes the vault outside `memory/`, and `problem_index.py` excludes
-`memory/`. These modes are the only crossing point. (The memory system's own
-infrastructure — the MCP wiring, remote access for the web apps, operations —
-is documented in its own repo, `basic-memory-remote`.)
+An unsupported agent can instead read repository `SKILL.md` directly. It must
+resolve `{{VAULT_PATH}}` to the vault root and `{{TOOLS_DIR}}` to this
+repository before following it. Both installers are idempotent: they replace
+only Perspirator's generated adapter and script copies, and do not remove other
+installation files.
 
-- **Context export (Mode 7)** — "brief memory on [[X]]." Gathers the relevant
-  vault neighbourhood of a problem and writes a curated brief into `memory/`,
-  so the other apps can see the vault's current state of that problem without
-  ever touching the vault. Augments an existing brief rather than duplicating.
-- **Promotion (Mode 8)** — "promote memory." Treats a memory note (progress
-  made in another app) as a source: extracts the durable problems and
-  conjectures and promotes them into proper problem notes, dedup'd and
-  additive, under the same invariants as Ingest. The memory note stays —
-  memory is the working layer, the vault is the record.
+## Runtime summary
 
----
+A problem note contains a line exactly equal to `***`: the problem is above it
+and the current conjecture below it. The runtime starts from a seed, reads
+problem halves before pulling conjectures, traverses explanatory links rather
+than scanning blindly, separates structural facts from semantic judgement,
+and leaves conflicts open rather than manufacturing convergence.
 
-## Invariants (what the write modes will and won't do)
+Read modes cover seeded perspiration, conflict hunting, and grounding an
+external task. Approval-gated write modes cover ingest, argued connections,
+and conflict write-back. Bridge modes export curated vault context to Basic
+Memory and promote durable memory context back into vault problem notes.
 
-The runtime's write rules are **artifact-sensitive** (defined in full in
-`<vault>/memory/perspirator/Perspirator.md`):
+Write behaviour is artifact-sensitive under runtime v1.1:
 
-- **Protected — user-authored vault knowledge** (your problem/conjecture
-  prose, exact sources, unresolved problems, unique criticisms): never
-  destructively rewritten or deleted by ordinary modes. Writing near it
-  is additive only — new notes or appended lines. Destructive change
-  requires a proposed plan, your explicit approval, and a visible diff.
-- **Mutable — current-facing artifacts** (Basic Memory project
-  summaries, fingerprints, agent-managed briefs): may be replaced or
-  consolidated with explicit approval; a superseded formulation is not
-  kept as a rival current theory.
-- **Disposable — derived artifacts** (stale run reports, closed
-  proposals, redundant audits, indexes, scratch files): deleted once
-  their useful conclusions are incorporated; history alone is not a
-  reason to keep them.
+- Protected user-authored knowledge permits additive nearby writes by ordinary
+  modes; destructive change needs a plan, explicit approval, and a visible
+  diff or exact operation summary.
+- Mutable current-facing summaries and briefs may be replaced or consolidated
+  with approval; obsolete versions do not remain as rival current theories.
+- Disposable derived indexes, scratch files, incorporated reports, and closed
+  proposals may be deleted after their useful conclusions are incorporated.
 
-And always:
+Every substantial traversal or write produces the runtime's inspectable run
+report. Behavioural cases and the report contract live with the runtime under
+`memory/perspirator/`; installation does not copy or redefine them.
 
-- A capability preflight before every substantial run: the agent records
-  what it can actually access (Basic Memory, vault filesystem, Obsidian
-  CLI, scripts) and runs fully, degrades explicitly, or refuses — it
-  never implies it consulted a source it could not reach.
-- Always dedup against the index before creating, so a source is never
-  turned into a duplicate of a note you already have.
-- Match your vault's conventions (`up:` / `category:` frontmatter, the
-  `***` separator, your title style), learned from the vault.
-- Surface a diff or exact operation summary for every write, replacement,
-  or deletion. The index is derived and disposable; your markdown is the
-  database.
+## Doctor contract
+
+`doctor.py` defaults to `Auto`: it validates adapters that actually exist and
+does not fail a Codex-only setup because Claude Code is absent, or vice versa.
+An explicit target validates only that target (`All` validates both). Checks
+are grouped into canonical runtime, shared scripts, and adapter sections.
+
+For each adapter, doctor verifies the runtime and script paths, unresolved
+placeholders, the complete bootstrap contract, absence of semantic-policy
+headings, and byte equality with shared scripts. When the repository template
+is available, the rendered adapter must match it exactly. When both adapters
+exist, doctor also normalizes their target-specific tool paths and verifies
+that their bootstrap semantics and script bytes are identical.

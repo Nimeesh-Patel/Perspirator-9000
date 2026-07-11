@@ -1,53 +1,119 @@
 <#
-  Perspirator 9000 installer (Windows / PowerShell).
+  Target-aware Perspirator installer for PowerShell.
 
-  Deploys the bootstrap so an agent can run it:
-    - copies problem_half.py, problem_index.py and doctor.py into the
-      commands dir
-    - renders SKILL.md -> <commands-dir>\perspirate.md with real paths
-      substituted for the {{COMMANDS_DIR}} and {{VAULT_PATH}} placeholders
+  The root SKILL.md is the canonical bootstrap source. Each selected target
+  receives a rendered discovery adapter plus the shared structural scripts.
 
-  The semantic runtime is NOT deployed by this script: it lives in the
-  vault at <vault>\memory\perspirator\Perspirator.md and is read at the
-  start of every run.
+  Examples:
+    .\install.ps1 -Target ClaudeCode
+    .\install.ps1 -Target Codex
+    .\install.ps1 -Target All -VaultDir "D:\My Vault"
+    .\install.ps1 -Target Custom -Destination "D:\agent prompts"
 
-  Usage:
-    .\install.ps1                      # installs to ~\.claude\commands (Claude Code)
-    .\install.ps1 -CommandsDir D:\dir  # installs to a custom commands dir
-    .\install.ps1 -VaultDir D:\vault   # non-default Obsidian vault root
-
-  Idempotent: re-running overwrites the deployed copies only.
+  Omitting -Target retains the historical Claude Code default, but the
+  selected target and destination are printed before any files are written.
+  The legacy -CommandsDir option remains a Claude Code destination override.
 #>
 param(
-  [string]$CommandsDir = (Join-Path $HOME ".claude\commands"),
-  [string]$VaultDir = (Join-Path $HOME "nimeesh vault")
+  [ValidateSet("ClaudeCode", "Codex", "All", "Custom")]
+  [string]$Target = "ClaudeCode",
+  [string]$VaultDir = (Join-Path $HOME "nimeesh vault"),
+  [string]$Destination,
+  [string]$CommandsDir,
+  [string]$ClaudeDir = (Join-Path $HOME ".claude\commands"),
+  [string]$CodexDir = (Join-Path $HOME ".agents\skills\perspirate")
 )
 
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-Write-Host "Perspirator 9000 -> installing into: $CommandsDir"
-New-Item -ItemType Directory -Force -Path $CommandsDir | Out-Null
+function Resolve-FullPath([string]$Path) {
+  $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
 
-# 1. Helper scripts (verbatim).
-Copy-Item (Join-Path $RepoDir "problem_half.py")  (Join-Path $CommandsDir "problem_half.py")  -Force
-Copy-Item (Join-Path $RepoDir "problem_index.py") (Join-Path $CommandsDir "problem_index.py") -Force
-Copy-Item (Join-Path $RepoDir "doctor.py")        (Join-Path $CommandsDir "doctor.py")        -Force
+if ($CommandsDir) {
+  if ($Destination) { throw "Use either -CommandsDir or -Destination, not both." }
+  if ($PSBoundParameters.ContainsKey("Target") -and $Target -ne "ClaudeCode") {
+    throw "-CommandsDir is a ClaudeCode compatibility option."
+  }
+  $Target = "ClaudeCode"
+  $ClaudeDir = $CommandsDir
+}
 
-# 2. Bootstrap with the placeholders resolved to real absolute paths.
-$skill = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoDir "SKILL.md")
-$skill = $skill.Replace("{{COMMANDS_DIR}}", ($CommandsDir -replace '\\','/'))
-$skill = $skill.Replace("{{VAULT_PATH}}", ($VaultDir -replace '\\','/'))
-$dst = Join-Path $CommandsDir "perspirate.md"
-[System.IO.File]::WriteAllText($dst, $skill, (New-Object System.Text.UTF8Encoding($false)))
+if ($Target -eq "Custom" -and -not $Destination) {
+  throw "Custom target requires -Destination."
+}
+if ($Target -eq "All" -and $Destination) {
+  throw "-Destination is valid only with Custom (or as a single-target override)."
+}
 
-Write-Host "  copied:   problem_half.py, problem_index.py, doctor.py"
-Write-Host "  rendered: $dst"
-Write-Host "  runtime:  $VaultDir\memory\perspirator\Perspirator.md (canonical, in the vault)"
+$VaultDir = Resolve-FullPath $VaultDir
+$ClaudeDir = Resolve-FullPath $ClaudeDir
+$CodexDir = Resolve-FullPath $CodexDir
+if ($Destination) { $Destination = Resolve-FullPath $Destination }
+
+$jobs = @()
+switch ($Target) {
+  "ClaudeCode" {
+    $dir = if ($Destination) { $Destination } else { $ClaudeDir }
+    $jobs += [pscustomobject]@{ Name = "Claude Code"; Dir = $dir; File = "perspirate.md" }
+  }
+  "Codex" {
+    $dir = if ($Destination) { $Destination } else { $CodexDir }
+    $jobs += [pscustomobject]@{ Name = "Codex"; Dir = $dir; File = "SKILL.md" }
+  }
+  "All" {
+    $jobs += [pscustomobject]@{ Name = "Claude Code"; Dir = $ClaudeDir; File = "perspirate.md" }
+    $jobs += [pscustomobject]@{ Name = "Codex"; Dir = $CodexDir; File = "SKILL.md" }
+  }
+  "Custom" {
+    $jobs += [pscustomobject]@{ Name = "Custom"; Dir = $Destination; File = "SKILL.md" }
+  }
+}
+
+Write-Host "Perspirator installer"
+if (-not $PSBoundParameters.ContainsKey("Target") -and -not $CommandsDir) {
+  Write-Host "  target: ClaudeCode (backward-compatible default)"
+} else {
+  Write-Host "  target: $Target"
+}
+Write-Host "  vault:  $VaultDir"
+foreach ($job in $jobs) { Write-Host "  $($job.Name): $($job.Dir)\$($job.File)" }
 Write-Host ""
-Write-Host "Done. Next:"
-Write-Host "  1. Enable the Obsidian CLI (Obsidian 1.12+): Settings -> General ->"
-Write-Host "     Command line interface, and add 'obsidian' to your PATH."
-Write-Host "  2. Keep Obsidian running with your vault open."
-Write-Host "  3. In Claude Code, invoke: /perspirate"
-Write-Host "     (other agents: point them at SKILL.md in this repo)."
+
+$template = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoDir "SKILL.md")
+foreach ($job in $jobs) {
+  New-Item -ItemType Directory -Force -Path $job.Dir | Out-Null
+  foreach ($script in "problem_half.py", "problem_index.py", "doctor.py") {
+    Copy-Item (Join-Path $RepoDir $script) (Join-Path $job.Dir $script) -Force
+  }
+
+  $rendered = $template.Replace("{{TOOLS_DIR}}", ($job.Dir -replace '\\', '/'))
+  $rendered = $rendered.Replace("{{VAULT_PATH}}", ($VaultDir -replace '\\', '/'))
+  $adapter = Join-Path $job.Dir $job.File
+  [System.IO.File]::WriteAllText(
+    $adapter, $rendered, [System.Text.UTF8Encoding]::new($false)
+  )
+}
+
+Write-Host "Installed without removing any existing unrelated files."
+$doctor = Join-Path $RepoDir "doctor.py"
+foreach ($job in $jobs) {
+  switch ($job.Name) {
+    "Claude Code" {
+      Write-Host "  Claude Code: invoke /perspirate"
+      Write-Host ('  Validate Claude Code: python "{0}" --target ClaudeCode --vault "{1}" --claude-dir "{2}"' -f $doctor, $VaultDir, $job.Dir)
+    }
+    "Codex" {
+      Write-Host "  Codex: invoke the perspirate skill by name or request"
+      Write-Host ('  Validate Codex: python "{0}" --target Codex --vault "{1}" --codex-dir "{2}"' -f $doctor, $VaultDir, $job.Dir)
+    }
+    "Custom" {
+      Write-Host "  Custom: load $($job.Dir)\SKILL.md in the agent"
+      Write-Host ('  Validate Custom: python "{0}" --target Custom --vault "{1}" --custom-dir "{2}"' -f $doctor, $VaultDir, $job.Dir)
+    }
+  }
+}
+if ($Target -eq "All") {
+  Write-Host ('  Validate both: python "{0}" --target All --vault "{1}" --claude-dir "{2}" --codex-dir "{3}"' -f $doctor, $VaultDir, $jobs[0].Dir, $jobs[1].Dir)
+}
