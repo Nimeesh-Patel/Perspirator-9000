@@ -6,7 +6,7 @@ __pycache__/
 *index*.json
 index.json
 
-# Operation log written by the write modes (per-machine, not source)
+# Historical operation log from pre-v1 write operations (per-machine, not source)
 perspirate-log.md
 
 # Local agent config (not part of the skill; the installer handles deployment)

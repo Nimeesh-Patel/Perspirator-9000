@@ -52,15 +52,15 @@ and do not require Obsidian to be running:
   adapter. Use `python doctor.py --help` for target options.
 
 Obsidian CLI commands can add search, backlink, property, and write
-capabilities when the desktop application and CLI are available. The runtime's
-capability preflight decides whether a particular run is full, degraded, or
-refused. Structural tools establish facts about files; the runtime assigns
+capabilities when the desktop application and CLI are available. Per the
+runtime, disclose before substantial work any missing capability that limits
+the answer. Structural tools establish facts about files; the runtime assigns
 semantic judgement to the agent.
 
 ## 4. Run report
 
-After a substantial traversal or write, write the report required by the
-runtime and `runs/README.md` to:
+After a substantial traversal or write, write the report required by
+`runs/README.md` (where the runtime delegates its reporting rules) to:
 
 ```
 {{VAULT_PATH}}/memory/perspirator/runs/YYYY-MM-DD-<slug>.md

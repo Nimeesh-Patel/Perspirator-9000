@@ -21,24 +21,24 @@ lives in the runtime; adapters only make the same bootstrap discoverable.
 
 ## Authority and capabilities
 
-The active runtime is authoritative for traversal, relevance, modes,
-conflicts, and write-back. This README summarizes it; when the two disagree,
-the runtime wins. Different agents can have different capabilities, so the
-runtime requires a preflight and chooses full execution, an explicitly bounded
-degraded execution, or refusal.
+The active runtime is authoritative for traversal, relevance, conflicts, and
+write behaviour. This README summarizes it; when the two disagree, the
+runtime wins. Different agents can have different capabilities, so the
+runtime requires disclosing, before substantial work, any missing capability
+that limits the answer — never implying access that did not exist.
 
 | Capability | What it enables | Universal requirement? |
 |---|---|---|
 | Basic Memory MCP | Cross-app problem map and shared working notes | No; direct `memory/` access can substitute |
 | Direct `memory/` access | Filesystem fallback for the same problem map | No; MCP can substitute |
-| Full-vault filesystem | Problem-note reads and structural traversal | Required only for modes that need the vault |
+| Full-vault filesystem | Problem-note reads and structural traversal | Required only for tasks that need the vault |
 | Obsidian CLI | Search context, backlinks, properties, and CLI writes | No; requires Obsidian running when used |
 | Structural scripts | Deterministic note halves and derived indexes | Required when their structural facts are needed |
-| Write access | Run reports and approval-gated write modes | Required only for the relevant write |
+| Write access | Run reports and approval-gated writes | Required only for the relevant write |
 
 `problem_half.py` and `problem_index.py` read Markdown directly and do not need
 Obsidian to be running. Obsidian desktop and its CLI are useful or required for
-the particular capabilities that call them, not for every degraded run.
+the particular capabilities that call them, not for every run.
 
 ## Repository files
 
@@ -135,24 +135,19 @@ problem halves before pulling conjectures, traverses explanatory links rather
 than scanning blindly, separates structural facts from semantic judgement,
 and leaves conflicts open rather than manufacturing convergence.
 
-Read modes cover seeded perspiration, conflict hunting, and grounding an
-external task. Approval-gated write modes cover ingest, argued connections,
-and conflict write-back. Bridge modes export curated vault context to Basic
-Memory and promote durable memory context back into vault problem notes.
+The runtime (v2) defines one loop, not a catalogue of modes: Nimeesh supplies
+a problem or criticism; Perspirator recovers context, builds a bounded
+frontier, draws out implications and assumptions, states conflicts as precise
+problems, and returns control to Nimeesh. It does not give advice. Reading is
+the default; any write to user-authored knowledge needs a named plan, an
+exact operation summary, and explicit approval. Detailed artifact classes and
+retention rules are delegated to the vault's current policies (see the Memory
+Structure Policy) and folder READMEs.
 
-Write behaviour is artifact-sensitive under runtime v1.1:
-
-- Protected user-authored knowledge permits additive nearby writes by ordinary
-  modes; destructive change needs a plan, explicit approval, and a visible
-  diff or exact operation summary.
-- Mutable current-facing summaries and briefs may be replaced or consolidated
-  with approval; obsolete versions do not remain as rival current theories.
-- Disposable derived indexes, scratch files, incorporated reports, and closed
-  proposals may be deleted after their useful conclusions are incorporated.
-
-Every substantial traversal or write produces the runtime's inspectable run
-report. Behavioural cases and the report contract live with the runtime under
-`memory/perspirator/`; installation does not copy or redefine them.
+Every substantial traversal or write produces the inspectable run report
+required by `runs/README.md`. Behavioural cases and the report contract live
+with the runtime under `memory/perspirator/`; installation does not copy or
+redefine them.
 
 ## Doctor contract
 

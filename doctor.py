@@ -18,13 +18,10 @@ REQUIRED_BOOTSTRAP_TEXT = (
     "## 5. Authority rule",
 )
 POLICY_HEADINGS = (
-    "## Capability preflight",
-    "## Problem-first traversal",
-    "## Relevance",
-    "## Implications",
-    "## Conflicts",
-    "## Write-back rules",
-    "## Modes",
+    "## Theory",
+    "## Task",
+    "## Method",
+    "## Capabilities, writes, and persistence",
 )
 
 
@@ -60,8 +57,10 @@ def slash(path):
 
 
 def supported_version(value):
-    match = re.match(r"^(\d+)\.(\d+)", value or "")
-    return bool(match and tuple(map(int, match.groups())) >= (1, 1))
+    match = re.match(r"^(\d+)(?:\.(\d+))?", value or "")
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2) or 0)) >= (1, 1)
 
 
 def render(template, vault, tools_dir):
