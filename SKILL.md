@@ -30,7 +30,7 @@ the vault root with `obsidian vault info=path` and look for
 ## 2. Load it or refuse
 
 Read the whole file at the beginning of every Perspirator task. Check that its
-frontmatter says `status: active` and note its `version`. Its body is the
+frontmatter says `status: active`. Its body is the
 active operating instruction and supersedes remembered or repository-level
 summaries of Perspirator behaviour.
 
@@ -73,5 +73,5 @@ After a substantial traversal or write, write the report required by
 - An agent must not edit `Perspirator.md` on its own initiative. Proposed
   changes go in `{{VAULT_PATH}}/memory/perspirator/proposals/`.
 - An agent may edit the runtime only when Nimeesh explicitly asks it to apply
-  a change; then it must bump the version and update
-  `{{VAULT_PATH}}/memory/perspirator/CHANGELOG.md`.
+  a change. Obsidian Sync retains the note's recent edit history; repository
+  changes use Git and are committed and pushed after validation.

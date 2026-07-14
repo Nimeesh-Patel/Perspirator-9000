@@ -135,7 +135,7 @@ problem halves before pulling conjectures, traverses explanatory links rather
 than scanning blindly, separates structural facts from semantic judgement,
 and leaves conflicts open rather than manufacturing convergence.
 
-The runtime (v2) defines one loop, not a catalogue of modes: Nimeesh supplies
+The runtime defines one loop, not a catalogue of modes: Nimeesh supplies
 a problem or criticism; Perspirator recovers context, builds a bounded
 frontier, draws out implications and assumptions, states conflicts as precise
 problems, and returns control to Nimeesh. It does not give advice. Reading is
@@ -148,6 +148,11 @@ Every substantial traversal or write produces the inspectable run report
 required by `runs/README.md`. Behavioural cases and the report contract live
 with the runtime under `memory/perspirator/`; installation does not copy or
 redefine them.
+
+Runtime-note history is provided by Obsidian Sync rather than manual version
+numbers or a parallel changelog. Repository changes are tracked in Git; after
+a verified repository change, commit and push the scoped change so the remote
+remains the current recoverable source.
 
 ## Doctor contract
 

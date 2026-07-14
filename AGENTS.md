@@ -16,3 +16,8 @@ Use the installer target matching the current environment:
 Python 3 is required for the structural tools. Obsidian CLI availability is a
 capability, not a universal installation prerequisite. Run `doctor.py` with
 the target that was installed.
+
+After changing repository-owned files, validate the affected targets, commit
+only the intended repository changes, and push the commit to the configured
+remote. If validation or push fails, report the exact blocker instead of
+leaving the repository's publication state ambiguous.

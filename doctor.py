@@ -2,7 +2,6 @@
 """Validate the canonical runtime, structural toolkit, and agent adapters."""
 
 import argparse
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -56,13 +55,6 @@ def slash(path):
     return absolute(path).as_posix()
 
 
-def supported_version(value):
-    match = re.match(r"^(\d+)(?:\.(\d+))?", value or "")
-    if not match:
-        return False
-    return (int(match.group(1)), int(match.group(2) or 0)) >= (1, 1)
-
-
 def render(template, vault, tools_dir):
     return (template.replace("{{VAULT_PATH}}", slash(vault))
             .replace("{{TOOLS_DIR}}", slash(tools_dir)))
@@ -83,12 +75,8 @@ def validate_runtime(vault):
         fields = frontmatter_fields(text)
         check("runtime status is active", fields.get("status") == "active",
               f"status: {fields.get('status')!r}")
-        version = fields.get("version")
-        check("runtime version is v1.1 or newer", supported_version(version),
-              f"version: {version!r}")
     else:
         check("runtime status is active", False, "runtime missing")
-        check("runtime version is v1.1 or newer", False, "runtime missing")
 
     for name in ("proposals", "cases", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())
