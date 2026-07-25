@@ -76,6 +76,64 @@ def validate_vault(vault):
     check("runs directory is writable", writable, error)
 
 
+def validate_memory_freshness(vault):
+    """Checks that replace a manual revision pass.
+
+    Each one covers a place where an artifact used to restate another and drift
+    when nobody remembered to update it.
+    """
+    memory = vault / "memory"
+    print("\nMemory freshness")
+    if not memory.is_dir():
+        check("memory directory exists", False, str(memory))
+        return
+
+    notes = sorted(p for p in memory.rglob("*.md") if p.is_file())
+    stale_updated, wrong_permalink, formless = [], [], []
+
+    for path in notes:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        fields = frontmatter_fields(text)
+        rel = path.relative_to(vault).as_posix()
+
+        if "updated" in fields:
+            stale_updated.append(rel)
+
+        permalink = fields.get("permalink")
+        if permalink:
+            # basic-memory slugifies folder names, so compare in that form.
+            folder = path.parent.relative_to(vault).as_posix().lower().replace(" ", "-")
+            if not permalink.lower().startswith(folder + "/"):
+                wrong_permalink.append(f"{rel} -> {permalink}")
+
+        if path.parent.name == "policies" and fields.get("type") != "configuration":
+            if "## Problem" not in text or "## Conjecture" not in text:
+                formless.append(rel)
+
+    check("no note carries a hand-maintained 'updated:' field",
+          not stale_updated, ", ".join(stale_updated[:4]) or "")
+    check("every permalink matches the note's folder",
+          not wrong_permalink, ", ".join(wrong_permalink[:3]) or "")
+    check("every policy states a problem and a conjecture",
+          not formless, ", ".join(formless[:4]) or "")
+
+    # Reported, not failed: a note nothing points at has already been forgotten.
+    targets = {p: 0 for p in notes}
+    corpus = "\n".join(p.read_text(encoding="utf-8-sig", errors="replace")
+                       for p in notes)
+    for path in notes:
+        stem = path.stem
+        if f"[[{stem}]]" in corpus or f"[[{stem}|" in corpus or f"/{stem}]]" in corpus:
+            targets[path] = 1
+    orphans = [p.relative_to(vault).as_posix() for p, hit in targets.items() if not hit]
+    print(f"  [note] {len(orphans)} of {len(notes)} memory notes have no incoming "
+          f"wikilink (see the Recall policy)")
+    for rel in orphans[:8]:
+        print(f"         {rel}")
+    if len(orphans) > 8:
+        print(f"         ... and {len(orphans) - 8} more")
+
+
 def validate_shared_scripts(source_dir):
     print("\nShared structural toolkit")
     for name in SCRIPT_NAMES:
@@ -169,6 +227,7 @@ def main():
         selected = []
 
     validate_vault(vault)
+    validate_memory_freshness(vault)
     validate_shared_scripts(source_dir)
 
     rendered = {}
