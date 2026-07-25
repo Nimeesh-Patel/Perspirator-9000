@@ -6,22 +6,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+from adapters import (ADAPTERS, FIRST_CLASS, SCRIPT_NAMES, absolute,
+                      parse_target, render, selected_keys, slash)
+
 RESULTS = []
-SCRIPT_NAMES = ("problem_half.py", "problem_index.py", "doctor.py")
-REQUIRED_BOOTSTRAP_TEXT = (
-    "## 1. Locate the canonical runtime",
-    "## 2. Load it or refuse",
-    "If the runtime cannot be found or read, STOP.",
-    "## 3. Structural tools",
-    "## 4. Run report",
-    "## 5. Authority rule",
-)
-POLICY_HEADINGS = (
-    "## Theory",
-    "## Task",
-    "## Method",
-    "## Capabilities, writes, and persistence",
-)
 
 
 def check(label, ok, detail=""):
@@ -47,38 +35,31 @@ def frontmatter_fields(text):
     return fields
 
 
-def absolute(path):
-    return Path(path).expanduser().resolve(strict=False)
-
-
-def slash(path):
-    return absolute(path).as_posix()
-
-
-def render(template, vault, tools_dir):
-    return (template.replace("{{VAULT_PATH}}", slash(vault))
-            .replace("{{TOOLS_DIR}}", slash(tools_dir)))
-
-
 def normalized_adapter(text, vault, tools_dir):
     return (text.replace("\\", "/")
             .replace(slash(vault), "{{VAULT_PATH}}")
             .replace(slash(tools_dir), "{{TOOLS_DIR}}"))
 
 
-def validate_runtime(vault):
-    base = vault / "memory" / "perspirator"
-    runtime = base / "Perspirator.md"
-    print("\nCanonical runtime")
-    if check("runtime exists", runtime.is_file(), str(runtime)):
-        text = runtime.read_text(encoding="utf-8-sig", errors="replace")
-        fields = frontmatter_fields(text)
-        check("runtime status is active", fields.get("status") == "active",
-              f"status: {fields.get('status')!r}")
-    else:
-        check("runtime status is active", False, "runtime missing")
+def check_active_note(label, path):
+    """The note exists and its frontmatter says status: active."""
+    if not check(f"{label} exists", path.is_file(), str(path)):
+        check(f"{label} status is active", False, "note missing")
+        return
+    fields = frontmatter_fields(path.read_text(encoding="utf-8-sig", errors="replace"))
+    check(f"{label} status is active", fields.get("status") == "active",
+          f"status: {fields.get('status')!r}")
 
-    for name in ("proposals", "cases", "runs"):
+
+def validate_vault(vault):
+    base = vault / "memory" / "perspirator"
+    print("\nCanonical runtime")
+    check_active_note("runtime", base / "Perspirator.md")
+    check_active_note("bootstrap note", base / "Bootstrap.md")
+    check_active_note("policy loader note",
+                      vault / "memory" / "policies" / "Policy Loader.md")
+
+    for name in ("proposals", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())
 
     runs = base / "runs"
@@ -93,7 +74,6 @@ def validate_runtime(vault):
         except OSError as exc:
             error = str(exc)
     check("runs directory is writable", writable, error)
-    return runtime
 
 
 def validate_shared_scripts(source_dir):
@@ -103,25 +83,20 @@ def validate_shared_scripts(source_dir):
               str(source_dir / name))
 
 
-def validate_adapter(name, adapter, tools_dir, vault, template, source_dir):
-    print(f"\n{name} adapter")
+def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
+    print(f"\n{ADAPTERS[key]['label']} adapter")
     if not check("adapter exists", adapter.is_file(), str(adapter)):
         return None
 
     text = adapter.read_text(encoding="utf-8-sig", errors="replace")
-    canonical = f"{slash(vault)}/memory/perspirator/Perspirator.md"
-    normalized_text = text.replace("\\", "/")
-    check("points at canonical runtime", canonical.lower() in normalized_text.lower(),
-          canonical)
-    unresolved = any(marker in text for marker in
-                     ("{{VAULT_PATH}}", "{{TOOLS_DIR}}", "{{COMMANDS_DIR}}"))
+    normalized_text = text.replace("\\", "/").lower()
+
+    bootstrap = f"{slash(vault)}/memory/perspirator/Bootstrap.md"
+    check("names the bootstrap note", bootstrap.lower() in normalized_text, bootstrap)
+    unresolved = any(marker in text for marker in ("{{VAULT_PATH}}", "{{TOOLS_DIR}}"))
     check("contains no unresolved path placeholders", not unresolved)
     check("points at its structural toolkit",
-          slash(tools_dir).lower() in normalized_text.lower(), slash(tools_dir))
-    check("contains the complete bootstrap contract",
-          all(item in text for item in REQUIRED_BOOTSTRAP_TEXT))
-    check("contains no semantic runtime policy headings",
-          not any(heading in text for heading in POLICY_HEADINGS))
+          slash(tools_dir).lower() in normalized_text, slash(tools_dir))
 
     for script in SCRIPT_NAMES:
         installed = tools_dir / script
@@ -138,29 +113,21 @@ def validate_adapter(name, adapter, tools_dir, vault, template, source_dir):
     return text
 
 
-def parse_target(value):
-    aliases = {
-        "auto": "Auto", "claude": "ClaudeCode",
-        "claudecode": "ClaudeCode", "codex": "Codex",
-        "all": "All", "custom": "Custom",
-    }
+def target_type(value):
     try:
-        return aliases[value.lower()]
-    except KeyError as exc:
-        raise argparse.ArgumentTypeError(f"unknown target: {value}") from exc
+        return parse_target(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("vault_positional", nargs="?",
-                        help="legacy positional vault root")
-    parser.add_argument("--vault", help="Obsidian vault root")
-    parser.add_argument("--target", type=parse_target, default="Auto",
+    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"),
+                        help="Obsidian vault root")
+    parser.add_argument("--target", type=target_type, default="Auto",
                         help="Auto, ClaudeCode, Codex, All, or Custom")
-    parser.add_argument("--claude-dir",
-                        default=str(Path.home() / ".claude" / "commands"))
-    parser.add_argument("--codex-dir",
-                        default=str(Path.home() / ".agents" / "skills" / "perspirate"))
+    parser.add_argument("--claude-dir", default=str(ADAPTERS["ClaudeCode"]["default_dir"]))
+    parser.add_argument("--codex-dir", default=str(ADAPTERS["Codex"]["default_dir"]))
     parser.add_argument("--custom-dir")
     parser.add_argument("--source", help="canonical SKILL.md template")
     return parser.parse_args()
@@ -168,14 +135,15 @@ def arguments():
 
 def main():
     args = arguments()
-    if args.vault and args.vault_positional:
-        raise SystemExit("use either positional vault or --vault, not both")
-    vault = absolute(args.vault or args.vault_positional or
-                     (Path.home() / "nimeesh vault"))
-    claude_dir = absolute(args.claude_dir)
-    codex_dir = absolute(args.codex_dir)
-    custom_dir = absolute(args.custom_dir) if args.custom_dir else None
+    vault = absolute(args.vault)
     here = Path(__file__).resolve().parent
+
+    directories = {
+        "ClaudeCode": absolute(args.claude_dir),
+        "Codex": absolute(args.codex_dir),
+    }
+    if args.custom_dir:
+        directories["Custom"] = absolute(args.custom_dir)
 
     candidate = absolute(args.source) if args.source else here / "SKILL.md"
     template = None
@@ -185,52 +153,47 @@ def main():
             template = candidate_text
     source_dir = candidate.parent if template is not None else here
 
-    adapters = {
-        "ClaudeCode": ("Claude Code", claude_dir / "perspirate.md", claude_dir),
-        "Codex": ("Codex", codex_dir / "SKILL.md", codex_dir),
-    }
-    if custom_dir is not None:
-        adapters["Custom"] = ("Custom", custom_dir / "SKILL.md", custom_dir)
-
-    if args.target == "All":
-        selected = ["ClaudeCode", "Codex"]
-    elif args.target == "Auto":
-        selected = [key for key, (_, path, _) in adapters.items() if path.is_file()]
+    if args.target == "Auto":
+        selected = [key for key in FIRST_CLASS
+                    if (directories[key] / ADAPTERS[key]["filename"]).is_file()]
     else:
-        selected = [args.target]
+        selected = selected_keys(args.target)
 
     print(f"Perspirator doctor - target: {args.target}")
     print(f"Vault: {vault}")
     if not selected:
         check("an installed adapter was discovered", False,
               "use --target or install an adapter")
-    if "Custom" in selected and custom_dir is None:
+    if "Custom" in selected and "Custom" not in directories:
         check("custom directory supplied", False, "use --custom-dir")
         selected = []
 
-    validate_runtime(vault)
+    validate_vault(vault)
     validate_shared_scripts(source_dir)
 
     rendered = {}
     for key in selected:
-        name, path, tools_dir = adapters[key]
-        text = validate_adapter(name, path, tools_dir, vault, template, source_dir)
+        tools_dir = directories[key]
+        adapter = tools_dir / ADAPTERS[key]["filename"]
+        text = validate_adapter(key, adapter, tools_dir, vault, template, source_dir)
         if text is not None:
             rendered[key] = (text, tools_dir)
 
-    if "ClaudeCode" in rendered and "Codex" in rendered:
+    if len(rendered) > 1:
         print("\nCross-adapter consistency")
-        claude_text, claude_tools = rendered["ClaudeCode"]
-        codex_text, codex_tools = rendered["Codex"]
-        check("both adapters share one bootstrap semantics",
-              normalized_adapter(claude_text, vault, claude_tools) ==
-              normalized_adapter(codex_text, vault, codex_tools))
+        keys = sorted(rendered)
+        first_key = keys[0]
+        first_text, first_tools = rendered[first_key]
+        baseline = normalized_adapter(first_text, vault, first_tools)
+        for key in keys[1:]:
+            text, tools_dir = rendered[key]
+            check(f"{first_key} and {key} share one bootstrap semantics",
+                  normalized_adapter(text, vault, tools_dir) == baseline)
         for script in SCRIPT_NAMES:
-            check(f"both adapters share script bytes: {script}",
-                  (claude_tools / script).is_file() and
-                  (codex_tools / script).is_file() and
-                  (claude_tools / script).read_bytes() ==
-                  (codex_tools / script).read_bytes())
+            paths = [tools / script for _, tools in rendered.values()]
+            same = (all(path.is_file() for path in paths) and
+                    len({path.read_bytes() for path in paths}) == 1)
+            check(f"all adapters share script bytes: {script}", same)
 
     print()
     if RESULTS and all(RESULTS):
