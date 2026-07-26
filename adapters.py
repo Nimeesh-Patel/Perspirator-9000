@@ -7,7 +7,8 @@ here rather than parallel edits to an installer and a validator.
 
 from pathlib import Path
 
-SCRIPT_NAMES = ("problem_half.py", "problem_index.py", "doctor.py", "adapters.py")
+SCRIPT_NAMES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
+                "doctor.py", "adapters.py")
 
 ADAPTERS = {
     "ClaudeCode": {

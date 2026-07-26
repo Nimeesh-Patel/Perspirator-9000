@@ -58,6 +58,7 @@ def validate_vault(vault):
     check_active_note("bootstrap note", base / "Bootstrap.md")
     check_active_note("policy loader note",
                       vault / "memory" / "policies" / "Policy Loader.md")
+    check_active_note("candidate selection note", base / "Candidate Selection.md")
 
     for name in ("proposals", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())
