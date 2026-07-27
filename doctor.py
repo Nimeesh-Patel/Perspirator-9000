@@ -20,19 +20,8 @@ def check(label, ok, detail=""):
     return bool(ok)
 
 
-def frontmatter_fields(text):
-    text = text.replace("\r\n", "\n")
-    if not text.startswith("---\n"):
-        return {}
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return {}
-    fields = {}
-    for line in text[4:end].split("\n"):
-        if ":" in line and not line[:1].isspace():
-            key, _, value = line.partition(":")
-            fields[key.strip()] = value.strip().strip("'\"")
-    return fields
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from note_chunks import frontmatter_fields  # noqa: E402,F401
 
 
 def normalized_adapter(text, vault, tools_dir):
@@ -59,6 +48,7 @@ def validate_vault(vault):
     check_active_note("policy loader note",
                       vault / "memory" / "policies" / "Policy Loader.md")
     check_active_note("candidate selection note", base / "Candidate Selection.md")
+    check_active_note("neighbour retrieval note", base / "Neighbour Retrieval.md")
 
     for name in ("proposals", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())

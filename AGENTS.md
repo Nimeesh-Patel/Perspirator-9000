@@ -10,7 +10,7 @@ Install with `python install.py --target <ClaudeCode|Codex|All|Custom>`;
 `Custom` also needs `--destination`. The adapter table lives in `adapters.py`,
 so adding an agent is one row there.
 
-Python 3 is required for the structural tools. Obsidian CLI availability is a
+Python 3 is required for the structural tools; `neighbour.py` additionally needs numpy, torch, and transformers, which nothing else imports. Run `test_note_chunks.py` and `test_neighbour.py` after touching either parser. Obsidian CLI availability is a
 capability, not a universal installation prerequisite. Run `doctor.py` with
 the target that was installed.
 

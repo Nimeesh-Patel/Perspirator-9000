@@ -35,73 +35,14 @@ which must sit in the same directory.
 """
 
 import json
-import re
 import sys
 from pathlib import Path
 
-# Reuse the single source of truth for splitting on the first `***`.
+# One structural parser for the whole toolkit; see note_chunks.py. The `***`
+# contract itself stays owned by problem_half.split_note().
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from problem_half import split_note  # noqa: E402
-
-# [[Target]], [[Target|alias]], [[Target#heading]] -> "Target"
-WIKILINK = re.compile(r"\[\[([^\]\|#]+)")
-
-
-def extract_links(text: str):
-    """Unique outbound wikilink targets, in first-seen order."""
-    seen = {}
-    for m in WIKILINK.finditer(text):
-        target = m.group(1).strip()
-        if target and target not in seen:
-            seen[target] = None
-    return list(seen)
-
-
-def parse_frontmatter(fm: str):
-    """Pull category/collection and the up: parents out of YAML, without a
-    YAML dependency. Deliberately small: handles the two shapes the vault
-    actually uses (inline `key: value` and a block list of `- "[[x]]"`)."""
-    category = None
-    up = []
-    if not fm:
-        return category, up
-
-    lines = fm.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-
-        if stripped.startswith("category:"):
-            val = stripped[len("category:"):].strip()
-            if val:
-                category = val
-        elif stripped.startswith("collection:") and category is None:
-            val = stripped[len("collection:"):].strip()
-            if val:
-                category = val
-        elif stripped.startswith("up:"):
-            # up may be inline ("up: [[x]]") or a following indented block.
-            inline = stripped[len("up:"):].strip()
-            up.extend(extract_links(inline))
-            j = i + 1
-            while j < len(lines):
-                nxt = lines[j]
-                # Block items are indented (list dashes or wrapped values).
-                if nxt.strip() == "" or nxt[:1].isspace():
-                    up.extend(extract_links(nxt))
-                    j += 1
-                else:
-                    break
-            i = j
-            continue
-        i += 1
-
-    # De-dupe up preserving order.
-    seen = {}
-    for u in up:
-        seen.setdefault(u, None)
-    return category, list(seen)
+from note_chunks import body_offset, extract_links, parse_frontmatter  # noqa: E402
 
 
 def index_note(path: Path, vault_root: Path):
@@ -115,11 +56,8 @@ def index_note(path: Path, vault_root: Path):
 
     # Conjecture side = everything below the first ***; used only to tell
     # a stub from a developed note and to harvest links living in prose.
-    body = text.replace("\r\n", "\n").replace("\r", "\n")
-    if frontmatter is not None and body.startswith("---\n"):
-        end = body.find("\n---\n", 4)
-        if end != -1:
-            body = body[end + 5:]
+    normalised = text.replace("\r\n", "\n").replace("\r", "\n")
+    body = normalised[body_offset(normalised):]
     sep = body.find("\n***")
     conjecture = body[sep + 4:].strip() if sep != -1 else ""
 

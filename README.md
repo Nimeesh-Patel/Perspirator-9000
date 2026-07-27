@@ -10,7 +10,7 @@ Its architecture has four deliberately separate parts:
 ```text
 one canonical bootstrap contract      vault memory/perspirator/Bootstrap.md
 + one canonical vault runtime         vault memory/perspirator/Perspirator.md
-+ one structural toolkit              problem_half.py / problem_index.py
++ one structural toolkit              note_chunks.py / problem_*.py / neighbour.py
 + thin discovery adapters             rendered from repository SKILL.md
 ```
 
@@ -55,12 +55,17 @@ the particular capabilities that call them, not for every run.
 | `adapters.py` | The one adapter table — name, output filename, default directory — imported by the installer and the doctor. |
 | `install.py` | Renders discovery adapters from `SKILL.md` and copies the toolkit. |
 | `doctor.py` | Target-aware validation of vault notes, scripts, and adapters. |
-| `problem_half.py` | Stable structural contract for extracting the problem half. |
+| `problem_half.py` | Stable structural contract for extracting the problem half — sole owner of the `***` split. |
+| `note_chunks.py` | The one structural parser: frontmatter, wikilinks, headings, list items, offsets, `side`, `corpus`. Everything else imports it. |
 | `problem_index.py` | Derived, disposable problem-note index; excludes `memory/`. |
+| `neighbour.py` | Distributional neighbours of a piece of text. The only file with embedding dependencies. |
+| `test_note_chunks.py` / `test_neighbour.py` | Chunking, provenance, filtering, index freshness, and failure cases. Synthetic fixtures; no vault, no model. |
 | `CLAUDE.md` / `AGENTS.md` | Thin environment pointers, not semantic runtimes. |
 
-Python 3 is the only dependency. Adding a new agent is one row in
-`adapters.py`.
+Python 3 is the only dependency of the structural toolkit. `neighbour.py` is
+the one exception — it needs `numpy`, `torch`, and `transformers`, and nothing
+else imports them, so the rest of the toolkit still runs on a bare Python.
+Adding a new agent is one row in `adapters.py`.
 
 ## Installing
 
@@ -82,6 +87,56 @@ they replace only Perspirator's generated adapter and script copies and remove
 nothing else. An unsupported agent can instead read `SKILL.md` directly,
 resolving `{{VAULT_PATH}}` to the vault root and `{{TOOLS_DIR}}` to this
 repository.
+
+## Neighbour retrieval
+
+One substrate, several uses. `neighbour.py` answers a single question — *which
+chunks are distributionally near this text?* — and callers decide what the
+answer is for:
+
+```bash
+python neighbour.py index --vault "/path/to/vault"
+python neighbour.py match --vault "/path/to/vault" --file "some note.md" --corpus vault --k 10
+python neighbour.py match --vault "/path/to/vault" --text "loose idea" --side problem --json
+```
+
+Recurrence, problem-candidate material, idea placement, link discovery, and
+frontier expansion during a run are *queries*, not modes: `--corpus`, `--side`,
+`--folder`, and `--k` are how a caller narrows the space. The substrate does not
+know which use is intended and never files, moves, links, merges, or creates
+anything.
+
+It explicitly does **not** claim that two passages state the same problem, that
+one belongs inside the other, that a result is a criticism or a rival
+conjecture, or that a note is the right destination. Every result carries rank,
+score, note, heading, `side`, `corpus`, and whether the two notes already link
+or share referrers — so *already contained* and *already connected* stay
+distinguishable from *possibly new*. Scores are ordinal; a score is not
+confidence.
+
+The mechanism — model, indexed corpora and sides, exemptions, index location,
+provenance fields — lives in `memory/perspirator/Neighbour Retrieval.md` and is
+edited there, not in code. `neighbour.py` stops if that note is missing or not
+`status: active`. `Candidate Selection.md` continues to own what counts as a
+candidate.
+
+The index is disposable and regenerable: `<vault>/.perspirator/neighbours.npz`,
+a dot-folder Obsidian and `problem_index.py` both skip. Delete the file to
+remove it. Embedding dependencies (numpy, torch, transformers) are confined to
+`neighbour.py`; every other tool stays standard-library only.
+
+**Staying fresh is not scheduled and not remembered.** Every `match` levels the
+index against the vault before answering, and the cost tracks what changed, not
+the size of the vault: a note is re-read only when its mtime or size moved, a
+chunk is re-embedded only when its text changed, and deleted notes drop out
+with their vectors. Editing in Obsidian and querying immediately retrieves the
+edited text; `--no-refresh` skips the stat pass when the vault is known
+unchanged. A full build of 5,617 chunks takes ~140 s, an unchanged refresh is
+instant, and touching one note re-embeds only that note's changed chunks.
+
+Two changes can't be repaired incrementally and stop with an explicit message
+instead of silently mixing: a different model, and a change to the indexed
+corpora, sides, or exemptions. Both are fixed with `index --rebuild`.
 
 ## Runtime and bootstrap
 

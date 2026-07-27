@@ -25,33 +25,12 @@ what when where which while who whom why will with within without would yet you 
 problem problems note notes vault agent current remains remain rather still must may might
 """.split())
 
-LINK = re.compile(r"\[\[([^\]|#]+)")
-HEADING = re.compile(r"^(#{2,3})\s+(.*)$", re.M)
 PROBLEMISH = re.compile(r"problem|conflict|criticism|question", re.I)
-LIST_ITEM = re.compile(r"^(?:\d+\.|-)\s+\S")
 
-
-def read(path):
-    try:
-        return path.read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:
-        return None
-
-
-def section(text, heading):
-    """Lines under a `## ` heading, up to the next one."""
-    out, collecting = [], False
-    for line in text.replace("\r\n", "\n").split("\n"):
-        if line.startswith("## "):
-            collecting = line.strip().lower() == heading.lower()
-            continue
-        if collecting:
-            out.append(line)
-    return "\n".join(out).strip()
-
-
-def bullets(body):
-    return [b.strip()[2:].strip() for b in body.split("\n") if b.strip().startswith("- ")]
+# One structural parser for the whole toolkit; see note_chunks.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from note_chunks import (all_chunks, bullets, read_note as read,  # noqa: E402
+                         section, vault_links)
 
 
 def load_config(vault):
@@ -80,29 +59,24 @@ def tokens(sentence):
             if w not in STOPWORDS}
 
 
-def stated_problems(memory, exempt):
-    """(note, statement) for every explicitly stated problem in memory/."""
+def stated_problems(vault, exempt):
+    """(note, statement) for every explicitly stated problem in memory/.
+
+    A filter over chunks, not a parser: any memory chunk sitting under a
+    heading that names a problem, conflict, criticism, or question. Because a
+    chunk keeps multi-line list items whole, statements are no longer cut at
+    their first newline.
+    """
     found = []
-    for path in sorted(memory.rglob("*.md")):
-        if path.stem.lower() in exempt:
+    for chunk in all_chunks(vault, corpus="memory"):
+        if chunk["stem"].lower() in exempt:
             continue
-        text = read(path)
-        if text is None:
+        if not PROBLEMISH.search(" ".join(chunk["heading"])):
             continue
-        match = re.search(r"^## Problem\s*\n(.*?)(?=^## )", text, re.S | re.M)
-        if match:
-            found.append((path.stem, " ".join(match.group(1).split())))
-        for head in HEADING.finditer(text):
-            if not PROBLEMISH.search(head.group(2)):
-                continue
-            start = head.end()
-            nxt = re.search(r"^#{2,3}\s", text[start:], re.M)
-            body = text[start:start + (nxt.start() if nxt else 4000)]
-            for line in body.split("\n"):
-                item = line.strip()
-                if (LIST_ITEM.match(item) and len(item) > 60
-                        and "relates_to" not in item and "source [[" not in item):
-                    found.append((path.stem, " ".join(item.split())[:220]))
+        text = " ".join(chunk["text"].split())
+        if len(text) < 40 or "relates_to" in text or "source [[" in text:
+            continue
+        found.append((chunk["stem"], text))
     return found
 
 
@@ -121,24 +95,6 @@ def signal_recurrence(memory, exempt, threshold):
                          "where": [n1, n2], "text": a, "also": b})
     hits.sort(key=lambda h: -h["score"])
     return hits
-
-
-def vault_links(vault):
-    """target -> referring notes, and the set of note stems that exist."""
-    refs, existing = {}, set()
-    notes = [p for p in vault.rglob("*.md")
-             if ".trash" not in p.as_posix() and "Templates" not in p.as_posix()]
-    for path in notes:
-        existing.add(path.stem.lower())
-    for path in notes:
-        text = read(path)
-        if text is None:
-            continue
-        for raw in LINK.findall(text):
-            target = raw.strip().split("/")[-1]
-            if target:
-                refs.setdefault(target, set()).add(path)
-    return refs, existing, notes
 
 
 def signal_hub_stub(vault, max_bytes, min_referrers):
@@ -208,7 +164,7 @@ def main():
     signals, exempt, template = load_config(vault)
     hits = []
     if "recurrence" in signals:
-        hits += signal_recurrence(memory, exempt, signals["recurrence"][0])
+        hits += signal_recurrence(vault, exempt, signals["recurrence"][0])
     if "hub-stub" in signals:
         a, b = signals["hub-stub"][:2]
         hits += signal_hub_stub(vault, int(a), int(b))
