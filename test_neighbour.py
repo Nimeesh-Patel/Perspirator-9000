@@ -41,6 +41,23 @@ class StubEmbedder:
         return np.vstack(out)
 
 
+class FakePretrained:
+    """Minimal from_pretrained stand-in for local-first loader tests."""
+
+    def __init__(self, local=None, remote=None):
+        self.local = local
+        self.remote = remote
+        self.calls = []
+
+    def from_pretrained(self, model_name, **kwargs):
+        local_only = kwargs.get("local_files_only", False)
+        self.calls.append((model_name, local_only))
+        result = self.local if local_only else self.remote
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 CONFIG = """---
 title: Neighbour Retrieval
 status: active
@@ -97,6 +114,31 @@ def main():
               config["index"] == root / ".perspirator" / "neighbours.npz",
               str(config["index"]))
         out = config["index"]
+
+        cached = FakePretrained(local="cached", remote=AssertionError("network used"))
+        check("model loader: complete cache makes no Hub request",
+              nb.load_pretrained(cached, "stub/model", "model") == "cached"
+              and cached.calls == [("stub/model", True)],
+              str(cached.calls))
+
+        uncached = FakePretrained(local=OSError("not cached"), remote="downloaded")
+        check("model loader: cache miss falls back to download",
+              nb.load_pretrained(uncached, "stub/model", "model") == "downloaded"
+              and uncached.calls == [("stub/model", True), ("stub/model", False)],
+              str(uncached.calls))
+
+        unavailable = FakePretrained(local=OSError("not cached"),
+                                     remote=ConnectionError("offline"))
+        try:
+            nb.load_pretrained(unavailable, "stub/model", "model")
+            check("model loader: unavailable model fails concisely", False, "no SystemExit")
+        except SystemExit as e:
+            message = str(e)
+            check("model loader: unavailable model fails concisely",
+                  "local Hugging Face cache" in message
+                  and "could not be downloaded" in message
+                  and "ConnectionError: offline" in message,
+                  message)
 
         stub = StubEmbedder()
         r1 = nb.refresh(root, config, out, embedder=stub)

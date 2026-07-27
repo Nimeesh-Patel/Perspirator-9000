@@ -98,6 +98,7 @@ answer is for:
 python neighbour.py index --vault "/path/to/vault"
 python neighbour.py match --vault "/path/to/vault" --file "some note.md" --corpus vault --k 10
 python neighbour.py match --vault "/path/to/vault" --text "loose idea" --side problem --json
+python neighbour.py match --vault "/path/to/vault" --text "loose idea" --corpus all --side all
 ```
 
 Recurrence, problem-candidate material, idea placement, link discovery, and
@@ -124,6 +125,12 @@ The index is disposable and regenerable: `<vault>/.perspirator/neighbours.npz`,
 a dot-folder Obsidian and `problem_index.py` both skip. Delete the file to
 remove it. Embedding dependencies (numpy, torch, transformers) are confined to
 `neighbour.py`; every other tool stays standard-library only.
+
+Model loading is local-first. When the configured model is already complete in
+the Hugging Face cache, indexing and matching make no Hub request. A cache miss
+falls back to the normal download path; if neither source is available, the
+tool stops with a bounded error instead of leaking a requests traceback.
+`--corpus all` and `--side all` are explicit aliases for omitting those filters.
 
 **Staying fresh is not scheduled and not remembered.** Every `match` levels the
 index against the vault before answering, and the cost tracks what changed, not

@@ -94,8 +94,8 @@ class Embedder:
         import torch
         from transformers import AutoTokenizer, AutoModel
         self.torch = torch
-        self.tok = AutoTokenizer.from_pretrained(model_name)
-        self.mod = AutoModel.from_pretrained(model_name).eval()
+        self.tok = load_pretrained(AutoTokenizer, model_name, "tokenizer")
+        self.mod = load_pretrained(AutoModel, model_name, "model").eval()
 
     def __call__(self, texts, batch=32):
         import numpy as np
@@ -110,6 +110,24 @@ class Embedder:
                 out.append(self.torch.nn.functional.normalize(pooled, dim=1).numpy())
         return np.vstack(out) if out else np.zeros((0, self.mod.config.hidden_size),
                                                    dtype="float32")
+
+
+def load_pretrained(factory, model_name, component):
+    """Use a complete local cache without a Hub request; download on cache miss."""
+    try:
+        return factory.from_pretrained(model_name, local_files_only=True)
+    except (OSError, ValueError) as local_error:
+        try:
+            return factory.from_pretrained(model_name)
+        except Exception as download_error:
+            local_detail = " ".join(str(local_error).split())[:300]
+            download_detail = " ".join(str(download_error).split())[:300]
+            raise SystemExit(
+                f"STOP: embedding {component} {model_name!r} is unavailable from "
+                "the local Hugging Face cache and could not be downloaded.\n"
+                f"  local: {local_detail}\n"
+                f"  download: {type(download_error).__name__}: {download_detail}"
+            ) from None
 
 
 def keep_chunk(chunk, config):
@@ -250,9 +268,9 @@ def cmd_match(args):
 
     keep = []
     for i, m in enumerate(meta):
-        if args.corpus and m["corpus"] != args.corpus:
+        if args.corpus not in (None, "all") and m["corpus"] != args.corpus:
             continue
-        if args.side and m["side"] != args.side:
+        if args.side not in (None, "all") and m["side"] != args.side:
             continue
         if args.folder and not m["note"].startswith(args.folder):
             continue
@@ -320,8 +338,10 @@ def main():
     group.add_argument("--text")
     group.add_argument("--file")
     group.add_argument("--stdin", action="store_true")
-    p_match.add_argument("--corpus", choices=("memory", "vault"))
-    p_match.add_argument("--side", choices=("problem", "answer", "none"))
+    p_match.add_argument("--corpus", choices=("memory", "vault", "all"),
+                         help="restrict corpus; 'all' is the explicit no-filter value")
+    p_match.add_argument("--side", choices=("problem", "answer", "none", "all"),
+                         help="restrict note side; 'all' is the explicit no-filter value")
     p_match.add_argument("--folder")
     p_match.add_argument("--k", type=int, default=10)
     p_match.add_argument("--no-refresh", action="store_true",
