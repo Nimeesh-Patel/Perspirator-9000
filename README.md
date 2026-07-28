@@ -77,49 +77,72 @@ is needed for the root Problem Note corpus.
 ### Structural dataflow
 
 ```text
-                         <vault>/**/*.md
-                                │
-                         note_chunks.py
-                ┌───────────────┼────────────────┐
-                ▼               ▼                ▼
-        problem_half.py  problem_index.py  neighbour.py index
-        one problem side disposable map    disposable vectors
-                                                │
-                               ┌────────────────┴──────────────┐
-                               ▼                               ▼
-                    neighbour.py match              problem_candidates.py
-                    ranked nearby chunks            recurring/neglected
-                               └──────────────┬────────────────┘
-                                              ▼
-                                            agent
+<vault>/**/*.md
+        |
+        v
+problem_half.py: one normalized frontmatter/problem/conjecture structure
+        |
+        v
+note_chunks.py: select formation by structure
+        |
+        +-- Problem Note --> complete problem_identity + contextual conjecture
+        |                    (authored boundaries, then token windows if needed)
+        |
+        +-- other note ----> heading-aware authored blocks
+        |
+        v
+neighbour.py index: embed common RetrievalUnit records
+        |
+        v
+neighbour.py match: rank units --> collapse best unit per note
+        |
+        v
+obsidian_cli.py: bounded links/backlinks/properties after retrieval
+        |
+        v
+agent reads candidate notes and judges identity, relation, conflict, placement
+```
 
-external source URLs → source adapter → {id, text, url} bundle
-                                              │
-                         agent + neighbour → grouping plan
-                                              │
-                                              ▼
+Formation is specialised because authored structures explain different units;
+processing is shared because every unit has the same provenance, embedding,
+filtering, ranking, note-collapse, and context-expansion contract. Generic token
+windows are a last formation fallback, not the default. A logical unit whose
+embedding context is still long is covered by token windows and mean-pooled
+back to one vector rather than silently truncated. The problem-side API remains
+a wrapper over the same parser, so cheap traversal and embedding retrieval
+cannot disagree merely because they parsed `***` separately.
+
+Obsidian context is post-retrieval evidence, not embedding input. The read-only
+adapter probes the running app with bare `obsidian`, targets exact `path=`
+arguments, and exposes links, backlinks, properties, search, contextual search,
+Bases queries, orphans, dead ends, and unresolved links. `neighbour.py` uses the
+path-local evidence and reports a labelled filesystem fallback when configured.
+Neither provider changes vector scores.
+
+The neighbour index is reused by direct matching and recurrence candidate
+retrieval. Embedding and lexical scores nominate notes to inspect; they do not
+establish identity, relevance, placement, criticism, redundancy, or truth.
+
+```text
+external source URLs -> source adapter -> {id, text, url} bundle
+                                             |
+                         agent + neighbours -> explanatory grouping plan
+                                             |
+                                             v
                                   source_to_notes.py
                                   staged new or patched existing notes
 ```
 
-`note_chunks.py` owns shared Markdown chunking; `problem_half.py` owns the
-`***` split. The neighbour index is reused by direct matching and recurrence
-candidate retrieval. Embedding and lexical scores nominate passages to inspect;
-they do not establish identity, relevance, placement, criticism, or truth.
-
 `policy_index.py` performs the analogous structural job for policy: it exposes
 the problems stated by well-formed active policy notes and refuses an ambiguous
 surface. The agent still explains which policies bear on the present task and
-reads those policies in full. The tool does not rank policy relevance.
+reads those policies in full.
 
 Source adapters recover facts only. `x_posts.py` is one adapter, not the
-architecture. `source_to_notes.py` checks a plan's mechanical consequences—
+architecture. `source_to_notes.py` checks a plan's mechanical consequences:
 coverage, unique assignment, resolvable and YAML-safe `up:` links, ordinary
-Problem Note structure, and exact source text and URLs. New notes remain
-no-overwrite. An existing-note append requires `existing: true`, the exact
-current problem side, a `same_problem` explanation, staging for review, and an
-explicit `--append-existing` live-write flag. It preserves all existing bytes
-and rejects stale targets and duplicate root-note source URLs. The agent—not a
+Problem Note structure, and exact source text and URLs. Existing-note appends
+remain explicit, staged, stale-checked, and append-only. The agent—not a
 neighbour score—remains responsible for explanatory identity, grouping,
 relations, and conflicts.
 
@@ -139,10 +162,15 @@ relations, and conflicts.
 - `install.py` renders an adapter and copies the shared toolkit.
 - `doctor.py` validates the active vault contract, source scripts, installed
   adapters, byte equality, and cross-adapter consistency.
-- `problem_half.py` reads one Problem Note's frontmatter and problem side.
-- `note_chunks.py` emits paragraph/list/fence chunks with provenance and side.
+- `problem_half.py` parses frontmatter and both sides once; its old problem-side
+  API remains stable.
+- `note_chunks.py` forms inspectable retrieval units using the configured
+  structural strategy.
 - `problem_index.py` creates a disposable map of root-vault Problem Notes.
-- `neighbour.py` incrementally builds and queries the local embedding index.
+- `neighbour.py` indexes units, ranks them, collapses by note, and expands
+  configured context.
+- `obsidian_cli.py` provides bounded read-only Obsidian search, graph,
+  properties, Bases, and vault-shape context.
 - `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.
@@ -180,7 +208,8 @@ python problem_index.py "/vault" --out "/scratch/problems.json"
 
 # Query or investigate possible recurrence.
 python neighbour.py match --vault "/vault" --text "a problem formulation" \
-  --corpus all --side all --k 10
+  --corpus all --side all --unit all --graph configured --k 10
+python obsidian_cli.py --vault "/vault" context "path/to/note.md"
 python problem_candidates.py --vault "/vault" --json
 
 # Expose the structurally valid active-policy surface.
@@ -219,8 +248,11 @@ relate it. Conflict is a candidate problem, not untidiness to erase.
 ## Dependencies and verification
 
 Python 3 is sufficient for the structural and source tools. The neighbour
-subsystem additionally uses `numpy`, `torch`, and `transformers`. `x_posts.py`
-uses X's public syndication endpoint and the payload's structural Note Tweet
+subsystem additionally uses `numpy`, `torch`, and `transformers`. Obsidian CLI
+is optional for application-indexed context; bare `obsidian` is its availability
+probe, and configured filesystem fallback keeps vector retrieval usable without
+it. `x_posts.py` uses X's public syndication endpoint and the payload's
+structural Note Tweet
 marker—not text length or appearance—to invoke a status-ID-validated public
 long-text fallback. It records the chosen text route and refuses
 partial Note Tweet text when that recovery fails. Source fetching therefore

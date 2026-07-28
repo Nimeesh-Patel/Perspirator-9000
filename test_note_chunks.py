@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for note_chunks.py. Synthetic fixtures only; no vault access.
-
-Run: python test_note_chunks.py
-"""
+"""Contract tests for structural parsing and retrieval-unit formation."""
 
 import sys
 import tempfile
@@ -11,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import note_chunks as nc
 import policy_index as pi
+from problem_half import parse_note, split_note
 
 FAILS = []
 
@@ -68,6 +66,10 @@ def build(root, rel, text):
     return path
 
 
+def words(text):
+    return len(text.split())
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -77,72 +79,131 @@ def main():
         build(root, ".trash/ignored.md", PROBLEM_NOTE)
         build(root, "Attachments/skip.md", PROBLEM_NOTE)
 
-        # --- side ---------------------------------------------------------
-        cs = nc.chunks_for_note(p_problem, root)
-        sides = [c["side"] for c in cs]
-        check("problem side before the separator", sides[0] == "problem", str(sides))
-        check("answer side after the separator", sides[1:] == ["answer", "answer"], str(sides))
-        check("no separator -> side none",
-              all(c["side"] == "none" for c in nc.chunks_for_note(p_fence, root)))
+        parsed = parse_note(PROBLEM_NOTE)
+        check("shared parser exposes both sides", parsed["problem"].startswith("why is")
+              and parsed["conjecture"].startswith("because not"))
+        check("parser offsets are inspectable",
+              parsed["normalized"][parsed["problem_start"]:parsed["problem_end"]]
+              == parsed["problem"]
+              and parsed["normalized"][parsed["conjecture_start"]:parsed["conjecture_end"]]
+              == parsed["conjecture"])
+        check("old problem-half API remains compatible",
+              split_note(PROBLEM_NOTE) == (parsed["frontmatter"], parsed["problem"], True))
 
-        # --- the regression that mattered ---------------------------------
+        units = nc.chunks_for_note(p_problem, root)
+        check("short Problem Note has exactly two units", len(units) == 2, str(len(units)))
+        check("problem identity is complete",
+              units[0]["unit"] == "problem_identity"
+              and units[0]["side"] == "problem"
+              and units[0]["text"] == parsed["problem"])
+        check("conjecture remains one content unit",
+              units[1]["unit"] == "conjecture"
+              and units[1]["side"] == "answer"
+              and units[1]["text"] == parsed["conjecture"])
+        check("conjecture embedding carries problem identity",
+              parsed["problem"] in units[1]["embedding_text"]
+              and parsed["conjecture"] in units[1]["embedding_text"])
+        check("links captured from intact conjecture",
+              units[1]["links"] == ["precautionary principle", "the growth of knowledge"],
+              str(units[1]["links"]))
+
+        long_answer = """why preserve authored boundaries?
+***
+## Source one
+
+alpha beta gamma delta epsilon.
+
+source one continues with criticism.
+
+---
+
+## Source two
+
+zeta eta theta iota kappa.
+"""
+        p_long = build(root, "long.md", long_answer)
+        long_units = nc.chunks_for_note(p_long, root, max_tokens=12, token_length=words)
+        answers = [unit for unit in long_units if unit["side"] == "answer"]
+        check("oversize conjecture splits only after whole-unit test",
+              len(answers) > 1 and all(unit["unit"] == "conjecture" for unit in answers),
+              str([(u["strategy"], u["text"]) for u in answers]))
+        check("each oversize segment retains identity context",
+              all("why preserve authored boundaries?" in unit["embedding_text"]
+                  for unit in answers))
+        check("authored heading paths survive splitting",
+              any(unit["heading"] == ["Source two"] for unit in answers),
+              str([unit["heading"] for unit in answers]))
+
+        giant = "why avoid blind windows?\n***\n" + " ".join(f"word{i}" for i in range(35))
+        p_giant = build(root, "giant.md", giant)
+        giant_answers = [unit for unit in nc.chunks_for_note(
+            p_giant, root, max_tokens=12, token_length=words) if unit["side"] == "answer"]
+        check("single oversized authored block uses token-window fallback",
+              len(giant_answers) > 1
+              and all(unit["strategy"] == "token-window" for unit in giant_answers),
+              str([unit["strategy"] for unit in giant_answers]))
+        check("token windows preserve all source words in order",
+              " ".join(unit["text"] for unit in giant_answers)
+              == " ".join(f"word{i}" for i in range(35)))
+
+        plain_text = " ".join(f"plain{i}" for i in range(30))
+        p_plain = build(root, "long plain.md", plain_text)
+        plain_units = nc.chunks_for_note(
+            p_plain, root, max_tokens=12, token_length=words)
+        check("oversized non-problem block uses token-window units",
+              len(plain_units) > 1
+              and all(unit["unit"] == "block"
+                      and unit["strategy"] == "token-window"
+                      for unit in plain_units))
+        check("non-problem windows preserve source order",
+              " ".join(unit["text"] for unit in plain_units) == plain_text)
         multi = nc.chunks_for_note(p_multi, root)
-        first = next(c for c in multi if c["text"].startswith("1. **Policy"))
-        check("multi-line list item is ONE chunk",
-              first["text"].count("\n") == 2 and "changelog rule" in first["text"],
-              f"{first['text'].count(chr(10))+1} lines")
-        check("a second list item is a separate chunk",
-              any(c["text"].startswith("2. **Second") for c in multi))
-
-        # --- provenance ---------------------------------------------------
-        check("heading path recorded", first["heading"] == ["Conflicts found"],
-              str(first["heading"]))
+        first = next(unit for unit in multi if unit["text"].startswith("1. **Policy"))
+        check("non-problem multi-line list item stays one block",
+              first["text"].count("\n") == 2 and "changelog rule" in first["text"])
+        check("non-problem formation is explicit",
+              first["unit"] == "block" and first["strategy"] == "authored-blocks")
+        check("a second list item is separate",
+              any(unit["text"].startswith("2. **Second") for unit in multi))
+        check("heading path recorded", first["heading"] == ["Conflicts found"])
         check("corpus memory vs vault",
-              first["corpus"] == "memory" and cs[0]["corpus"] == "vault")
-        check("note path is vault-relative posix",
-              first["note"] == "memory/perspirator/runs/review.md", first["note"])
+              first["corpus"] == "memory" and units[0]["corpus"] == "vault")
         raw = p_multi.read_text(encoding="utf-8").replace("\r\n", "\n")
-        check("offsets slice back to the chunk text",
+        check("offsets slice back to display text",
               raw[first["start"]:first["end"]] == first["text"])
-        check("links captured per chunk",
-              cs[1]["links"] == ["precautionary principle"], str(cs[1]["links"]))
 
-        # --- fences -------------------------------------------------------
         fenced = nc.chunks_for_note(p_fence, root)
-        block = next((c for c in fenced if c["text"].startswith("```")), None)
+        block = next((unit for unit in fenced if unit["text"].startswith("```")), None)
         check("fenced block stays whole across blank lines",
               block is not None and "line three" in block["text"])
+        check("no separator uses side none", all(unit["side"] == "none" for unit in fenced))
 
-        # --- filters and excludes ----------------------------------------
         every = nc.all_chunks(root)
         check("excluded folders are skipped",
-              not any(c["note"].startswith((".trash", "Attachments")) for c in every))
-        check("corpus filter", all(c["corpus"] == "memory"
-                                   for c in nc.all_chunks(root, corpus="memory")))
-        check("side filter", all(c["side"] == "problem"
-                                 for c in nc.all_chunks(root, side="problem")))
+              not any(unit["note"].startswith((".trash", "Attachments")) for unit in every))
+        check("corpus filter", all(unit["corpus"] == "memory"
+                                   for unit in nc.all_chunks(root, corpus="memory")))
+        check("side filter", all(unit["side"] == "problem"
+                                 for unit in nc.all_chunks(root, side="problem")))
 
-        # --- frontmatter and links ---------------------------------------
-        cat, up = nc.parse_frontmatter("category: Morality\nup:\n  - '[[epistemology]]'")
-        check("frontmatter category + up", cat == "Morality" and up == ["epistemology"],
-              f"{cat} {up}")
+        category, up = nc.parse_frontmatter(
+            "category: Morality\nup:\n  - '[[epistemology]]'")
+        check("frontmatter category + up",
+              category == "Morality" and up == ["epistemology"])
         check("frontmatter_fields reads top-level keys",
               nc.frontmatter_fields(PROBLEM_NOTE).get("category") == "Morality")
-
-        refs, existing, notes = nc.vault_links(root)
+        refs, existing, _ = nc.vault_links(root)
         check("vault_links finds referrers",
               p_problem in refs.get("precautionary principle", set()))
         check("vault_links lists existing stems", "fenced" in existing)
 
-        # --- failure cases ------------------------------------------------
-        check("missing file returns no chunks",
+        check("missing file returns no units",
               nc.chunks_for_note(root / "nope.md", root) == [])
-        check("empty note returns no chunks",
+        check("empty note returns no units",
               nc.chunks_for_note(build(root, "empty.md", ""), root) == [])
-        check("frontmatter-only note returns no chunks",
+        check("frontmatter-only note returns no units",
               nc.chunks_for_note(build(root, "fm.md", "---\ntitle: x\n---\n"), root) == [])
 
-        # --- active policy surface ---------------------------------------
         build(root, "memory/policies/Policy Loader.md", """---
 title: Policy Loader
 type: configuration
@@ -171,20 +232,16 @@ status: draft
 """)
         surface = pi.active_policy_surface(root)
         check("policy surface contains active policies but not configuration/drafts",
-              surface == [{
-                  "title": "Explanatory Implementation",
-                  "path": "memory/policies/Explanatory.md",
-                  "problem": "How should a mechanism vary?",
-              }], str(surface))
+              surface == [{"title": "Explanatory Implementation",
+                           "path": "memory/policies/Explanatory.md",
+                           "problem": "How should a mechanism vary?"}], str(surface))
         policy.write_text(policy.read_text(encoding="utf-8").replace(
-            "## Conjecture\n\nPrefer an explanatory implementation.\n", ""),
-            encoding="utf-8")
+            "## Conjecture\n\nPrefer an explanatory implementation.\n", ""), encoding="utf-8")
         try:
             pi.active_policy_surface(root)
             check("malformed active policy is refused", False, "no ValueError")
         except ValueError as exc:
-            check("malformed active policy is refused",
-                  "missing Conjecture" in str(exc), str(exc))
+            check("malformed active policy is refused", "missing Conjecture" in str(exc))
 
     print()
     print(f"{'FAILED: ' + ', '.join(FAILS) if FAILS else 'all checks passed'}")

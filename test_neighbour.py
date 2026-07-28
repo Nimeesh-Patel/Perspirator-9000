@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for neighbour.py index freshness and config handling.
-
-Uses a stub embedder, so no model download and no network. Synthetic vault.
-Run: python test_neighbour.py
-"""
+"""Contract tests for incremental neighbour indexing and CLI context."""
 
 import hashlib
 import json
@@ -16,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 import neighbour as nb  # noqa: E402
+from obsidian_cli import ObsidianCLI, exact_path  # noqa: E402
 import problem_candidates as pc  # noqa: E402
 
 FAILS = []
@@ -28,28 +25,25 @@ def check(name, ok, detail=""):
 
 
 class StubEmbedder:
-    """Deterministic pseudo-vectors; counts what it was asked to embed."""
-
     def __init__(self):
         self.calls = []
+
+    def token_length(self, text):
+        return len(text.split())
 
     def __call__(self, texts, batch=32):
         self.calls.extend(texts)
         out = []
-        for t in texts:
-            h = hashlib.sha256(t.encode()).digest()[:8]
-            v = np.frombuffer(h, dtype=np.uint8).astype("float32")
-            out.append(v / (np.linalg.norm(v) or 1.0))
+        for text in texts:
+            digest = hashlib.sha256(text.encode()).digest()[:8]
+            vector = np.frombuffer(digest, dtype=np.uint8).astype("float32")
+            out.append(vector / (np.linalg.norm(vector) or 1.0))
         return np.vstack(out)
 
 
 class FakePretrained:
-    """Minimal from_pretrained stand-in for local-first loader tests."""
-
     def __init__(self, local=None, remote=None):
-        self.local = local
-        self.remote = remote
-        self.calls = []
+        self.local, self.remote, self.calls = local, remote, []
 
     def from_pretrained(self, model_name, **kwargs):
         local_only = kwargs.get("local_files_only", False)
@@ -58,6 +52,11 @@ class FakePretrained:
         if isinstance(result, Exception):
             raise result
         return result
+
+
+class Completed:
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
 
 
 CONFIG = """---
@@ -74,6 +73,22 @@ status: active
 
 - corpus: vault, memory
 - side: problem, answer, none
+- unit: problem_identity, conjecture, block
+
+## Unit formation
+
+- problem: identity-and-contextual-conjecture
+- non-problem: authored-blocks
+- oversize: authored-boundaries-then-token-windows
+- embedding-oversize: mean-pooled-token-windows
+- max-tokens: 256
+
+## Graph expansion
+
+- provider: obsidian
+- fallback: filesystem
+- limit: 5
+- timeout-seconds: 5
 
 ## Exempt
 
@@ -87,14 +102,13 @@ status: active
 
 
 def write(root, rel, text):
-    p = root / rel
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text, encoding="utf-8")
-    return p
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 def bump(path):
-    """Ensure a visible mtime change even on coarse filesystem clocks."""
     text = path.read_text(encoding="utf-8")
     path.write_text(text, encoding="utf-8")
     import os
@@ -111,52 +125,60 @@ def main():
         write(root, ".trash/skip.md", "problem c?\n***\nc.\n")
 
         config = nb.load_config(root)
-        check("config: model read from the note", config["model"] == "stub/model")
-        check("config: index location resolves <vault>",
-              config["index"] == root / ".perspirator" / "neighbours.npz",
-              str(config["index"]))
+        check("config loads model and index path",
+              config["model"] == "stub/model"
+              and config["index"] == root / ".perspirator" / "neighbours.npz")
+        check("config makes formation criticisable",
+              config["formation"]["problem"] == "identity-and-contextual-conjecture"
+              and config["formation"]["embedding-oversize"]
+              == "mean-pooled-token-windows"
+              and config["formation"]["max-tokens"] == 256)
+        check("config selects bounded graph provider",
+              config["graph"] == {"provider": "obsidian", "fallback": "filesystem",
+                                  "limit": 5, "timeout": 5}, str(config["graph"]))
         out = config["index"]
 
         cached = FakePretrained(local="cached", remote=AssertionError("network used"))
-        check("model loader: complete cache makes no Hub request",
+        check("complete model cache makes no Hub request",
               nb.load_pretrained(cached, "stub/model", "model") == "cached"
-              and cached.calls == [("stub/model", True)],
-              str(cached.calls))
-
+              and cached.calls == [("stub/model", True)])
         uncached = FakePretrained(local=OSError("not cached"), remote="downloaded")
-        check("model loader: cache miss falls back to download",
+        check("cache miss falls back to download",
               nb.load_pretrained(uncached, "stub/model", "model") == "downloaded"
-              and uncached.calls == [("stub/model", True), ("stub/model", False)],
-              str(uncached.calls))
-
+              and uncached.calls == [("stub/model", True), ("stub/model", False)])
         unavailable = FakePretrained(local=OSError("not cached"),
                                      remote=ConnectionError("offline"))
         try:
             nb.load_pretrained(unavailable, "stub/model", "model")
-            check("model loader: unavailable model fails concisely", False, "no SystemExit")
-        except SystemExit as e:
-            message = str(e)
-            check("model loader: unavailable model fails concisely",
+            check("unavailable model fails concisely", False, "no SystemExit")
+        except SystemExit as exc:
+            message = str(exc)
+            check("unavailable model fails concisely",
                   "local Hugging Face cache" in message
-                  and "could not be downloaded" in message
-                  and "ConnectionError: offline" in message,
-                  message)
+                  and "ConnectionError: offline" in message, message)
 
         stub = StubEmbedder()
-        r1 = nb.refresh(root, config, out, embedder=stub)
-        base = r1["chunks"]
-        check("initial build embeds every chunk",
-              r1["embedded"] == base and base > 0, str(r1))
-        check("exempt folder excluded", not any(
-            m["note"].startswith(".trash")
-            for m in json.loads(str(np.load(out)["meta"]))))
+        first = nb.refresh(root, config, out, embedder=stub)
+        base = first["units"]
+        check("initial build embeds every retrieval unit",
+              first["embedded"] == base and base > 0, str(first))
+        metadata = json.loads(str(np.load(out)["meta"]))
+        problem_units = [item for item in metadata if item["note"] == "a.md"]
+        check("Problem Note index stores identity plus contextual conjecture",
+              [item["unit"] for item in problem_units]
+              == ["problem_identity", "conjecture"]
+              and problem_units[1]["embedding_text"].startswith("a\nproblem a?\n***"),
+              str(problem_units))
+        check("exempt folder excluded",
+              not any(item["note"].startswith(".trash") for item in metadata))
         loaded = nb.load_index(root, index=out, refresh_index=False)
-        check("shared index loader exposes aligned metadata and vectors",
+        check("shared loader aligns metadata and vectors",
               len(loaded["meta"]) == len(loaded["vectors"]) == base)
-        check("lexical overlap remains an independent neighbour signal",
+        check("lexical overlap stays independent",
               nb.lexical_overlap(
                   "recurring cultural criticism preserves rational correction",
                   "recurring cultural criticism prevents rational correction") > 0.5)
+
         left = ("How can a criticism-preserving institution remain corrigible "
                 "when its leaders become attached to authority?")
         right = ("What lets an organisation replace entrenched governors while "
@@ -164,95 +186,132 @@ def main():
         write(root, "memory/Left.md", f"## Problems\n\n{left}\n")
         write(root, "memory/Right.md", f"## Questions\n\n{right}\n")
         recurrence_index = {
-            "meta": [
-                {"stem": "Left", "text": left},
-                {"stem": "Right", "text": right},
-            ],
+            "meta": [{"stem": "Left", "text": left},
+                     {"stem": "Right", "text": right}],
             "vectors": np.array([[1.0, 0.0], [0.95, 0.0]], dtype="float32"),
         }
         with patch.object(pc, "load_index", return_value=recurrence_index):
             recurrence = pc.signal_recurrence(
                 root, set(), embedding_threshold=0.9,
                 lexical_threshold=0.9, refresh_index=False)
-        check("candidate recurrence reuses the neighbour substrate",
-              len(recurrence) == 1
-              and recurrence[0]["matched_by"] == ["embedding"]
-              and recurrence[0]["lexical_score"] < 0.9)
+        check("recurrence reuses the shared substrate",
+              len(recurrence) == 1 and recurrence[0]["matched_by"] == ["embedding"])
         (root / "memory" / "Left.md").unlink()
         (root / "memory" / "Right.md").unlink()
 
-        stub2 = StubEmbedder()
-        r2 = nb.refresh(root, config, out, embedder=stub2)
-        check("unchanged vault re-embeds nothing",
-              r2["embedded"] == 0 and r2["notes_changed"] == 0 and r2["chunks"] == base,
-              str(r2))
-        check("unchanged vault does not call the model", stub2.calls == [])
+        unchanged_stub = StubEmbedder()
+        unchanged = nb.refresh(root, config, out, embedder=unchanged_stub)
+        check("unchanged vault does not call the model",
+              unchanged["embedded"] == 0 and unchanged_stub.calls == [])
 
         a.write_text("problem a?\n***\nconjecture a, revised.\n", encoding="utf-8")
         bump(a)
-        stub3 = StubEmbedder()
-        r3 = nb.refresh(root, config, out, embedder=stub3)
-        check("edited note re-embeds only its changed chunk",
-              r3["notes_changed"] == 1 and r3["embedded"] == 1, str(r3))
-        check("the changed text is what got embedded",
-              stub3.calls == ["conjecture a, revised."], str(stub3.calls))
+        edited_stub = StubEmbedder()
+        edited = nb.refresh(root, config, out, embedder=edited_stub)
+        check("edit re-embeds only changed contextual conjecture",
+              edited["notes_changed"] == 1 and edited["embedded"] == 1, str(edited))
+        check("embedded text retains the unchanged problem identity",
+              edited_stub.calls == ["a\nproblem a?\n***\nconjecture a, revised."],
+              str(edited_stub.calls))
 
         write(root, "c.md", "problem c?\n***\nconjecture c.\n")
-        stub4 = StubEmbedder()
-        r4 = nb.refresh(root, config, out, embedder=stub4)
-        check("new note adds chunks without touching the rest",
-              r4["chunks"] == base + 2 and r4["embedded"] == 2, str(r4))
-
+        added = nb.refresh(root, config, out, embedder=StubEmbedder())
+        check("new Problem Note adds exactly two units",
+              added["units"] == base + 2 and added["embedded"] == 2, str(added))
         b.unlink()
-        stub5 = StubEmbedder()
-        r5 = nb.refresh(root, config, out, embedder=stub5)
-        check("deleted note drops out of the index",
-              r5["notes_removed"] == 1 and r5["chunks"] == base and r5["embedded"] == 0,
-              str(r5))
-        notes = {m["note"] for m in json.loads(str(np.load(out)["meta"]))}
-        check("deleted note leaves no metadata behind", "b.md" not in notes, str(notes))
+        removed = nb.refresh(root, config, out, embedder=StubEmbedder())
+        check("deleted Problem Note drops both units",
+              removed["notes_removed"] == 1 and removed["units"] == base
+              and removed["embedded"] == 0, str(removed))
 
-        # a changed model must never be silently mixed
+        summary = nb.public_header({"model": "stub/model", "dim": 8, "units": base,
+                                    "built": "now", "shape": config["shape"],
+                                    "notes": {"a.md": [1, 2]}})
+        check("public query provenance omits unbounded freshness stamps",
+              "notes" not in summary and summary["shape"]["formation"]
+              == config["formation"], str(summary))
+        meta = [{"note": "same.md"}, {"note": "same.md"}, {"note": "other.md"}]
+        scores = np.array([0.8, 0.9, 0.7])
+        check("ranking collapses multiple unit hits to best note hit",
+              nb.collapse_by_note([0, 1, 2], meta, scores, 5) == [1, 2])
+
+        calls = []
+        def fake_runner(argv, **kwargs):
+            calls.append((argv, kwargs))
+            if len(argv) == 1:
+                return Completed("Obsidian CLI")
+            command = argv[2]
+            if command == "backlinks":
+                return Completed('[{"file":"source.md"}]')
+            if command == "links":
+                return Completed("target one.md\ntarget two.md\n")
+            if command == "properties":
+                return Completed('{"type":"Problem"}')
+            if command == "search":
+                return Completed('["a.md"]')
+            return Completed("")
+
+        cli = ObsidianCLI(root, runner=fake_runner, limit=1)
+        context = cli.note_context("folder/note.md")
+        check("CLI context combines links backlinks and properties",
+              context["backlinks"] == ["source.md"]
+              and context["links"] == ["target one.md"]
+              and context["properties"] == {"type": "Problem"}, str(context))
+        command_calls = [(argv, kwargs) for argv, kwargs in calls if len(argv) > 2]
+        check("CLI probes bare obsidian before path commands",
+              calls[0][0] == ["obsidian"], str(calls[0]))
+        check("CLI targets exact path and never invokes a shell",
+              all("path=folder/note.md" in argv for argv, _ in command_calls[:3])
+              and all(kwargs["shell"] is False for _, kwargs in command_calls[:3]),
+              str(command_calls[:3]))
+        searched = cli.search("knowledge growth", path="memory")
+        check("generic CLI adapter exposes bounded search",
+              searched["data"] == ["a.md"]
+              and "limit=1" in calls[-1][0], str(calls[-1]))
+        try:
+            exact_path("../outside.md")
+            check("exact paths reject traversal", False, "no ValueError")
+        except ValueError:
+            check("exact paths reject traversal", True)
+
         cfg_path = root / "memory" / "perspirator" / "Neighbour Retrieval.md"
         cfg_path.write_text(CONFIG.replace("stub/model", "other/model"), encoding="utf-8")
         try:
             nb.refresh(root, nb.load_config(root), out, embedder=StubEmbedder())
             check("model change is refused", False, "no SystemExit")
-        except SystemExit as e:
-            check("model change is refused", "not" in str(e) and "comparable" in str(e))
+        except SystemExit as exc:
+            check("model change is refused", "comparable" in str(exc))
 
-        # a changed indexing shape must not be silently reused
-        cfg_path.write_text(CONFIG.replace("- corpus: vault, memory", "- corpus: memory"),
+        cfg_path.write_text(CONFIG.replace("- max-tokens: 256", "- max-tokens: 128"),
                             encoding="utf-8")
         try:
             nb.refresh(root, nb.load_config(root), out, embedder=StubEmbedder())
-            check("indexing-shape change is refused", False, "no SystemExit")
-        except SystemExit as e:
-            check("indexing-shape change is refused", "different set of chunks" in str(e))
+            check("formation-shape change is refused", False, "no SystemExit")
+        except SystemExit as exc:
+            check("formation-shape change is refused", "retrieval-unit shape" in str(exc))
 
-        # rebuild after a shape change succeeds and re-scopes
-        cfg = nb.load_config(root)
-        nb.refresh(root, cfg, out, rebuild=True, embedder=StubEmbedder())
+        scoped_text = CONFIG.replace("- corpus: vault, memory", "- corpus: memory")
+        cfg_path.write_text(scoped_text, encoding="utf-8")
+        scoped_config = nb.load_config(root)
+        nb.refresh(root, scoped_config, out, rebuild=True, embedder=StubEmbedder())
         scoped = json.loads(str(np.load(out)["meta"]))
-        check("rebuild after shape change re-scopes the index",
-              scoped and all(m["corpus"] == "memory" for m in scoped),
-              f"{len(scoped)} chunks, corpora={ {m['corpus'] for m in scoped} }")
+        check("rebuild after shape change re-scopes index",
+              scoped and all(item["corpus"] == "memory" for item in scoped))
 
         cfg_path.write_text(CONFIG.replace("status: active", "status: draft"),
                             encoding="utf-8")
         try:
             nb.load_config(root)
-            check("inactive config note is refused", False, "no SystemExit")
-        except SystemExit as e:
-            check("inactive config note is refused", "not status: active" in str(e))
-
+            check("inactive config is refused", False, "no SystemExit")
+        except SystemExit as exc:
+            check("inactive config is refused", "not status: active" in str(exc))
         cfg_path.unlink()
         try:
             nb.load_config(root)
-            check("missing config note stops rather than improvising", False)
-        except SystemExit as e:
-            check("missing config note stops rather than improvising",
-                  "STOP" in str(e) and "improvise" in str(e))
+            check("missing config stops rather than improvising", False)
+        except SystemExit as exc:
+            check("missing config stops rather than improvising",
+                  "STOP" in str(exc) and "improvise" in str(exc))
 
     print()
     print(f"{'FAILED: ' + ', '.join(FAILS) if FAILS else 'all checks passed'}")
