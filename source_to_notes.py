@@ -168,10 +168,12 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
 def render_frontmatter(note):
     if note["up"]:
         up = "up:\n" + "\n".join(
-            f"- '[[{parent}]]'" for parent in note["up"])
+            f"- {json.dumps(f'[[{parent}]]', ensure_ascii=False)}"
+            for parent in note["up"])
     else:
         up = "up: null"
-    return f"---\n{up}\ncategory: {note['category']}\n---"
+    category = json.dumps(note["category"], ensure_ascii=False)
+    return f"---\n{up}\ncategory: {category}\n---"
 
 
 def render_note(note, sources):

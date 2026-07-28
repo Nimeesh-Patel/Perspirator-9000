@@ -117,16 +117,16 @@ class SourceToNotesTests(unittest.TestCase):
         plan = {"notes": [{
             "title": "A live conflict",
             "problem": "How can both claims stand?",
-            "up": ["Known parent"],
+            "up": ["Known parent's criticism"],
             "source_ids": ["a", "b"],
         }]}
         with tempfile.TemporaryDirectory() as directory:
             vault = Path(directory)
-            (vault / "Known parent.md").write_text("parent", encoding="utf-8")
+            (vault / "Known parent's criticism.md").write_text("parent", encoding="utf-8")
             notes, unassigned = stn.validate_plan(plan, sources, vault=vault)
             text = stn.render_note(notes[0], sources)
         self.assertEqual(unassigned, [])
-        self.assertIn("up:\n- '[[Known parent]]'\ncategory: Default", text)
+        self.assertIn("up:\n- \"[[Known parent's criticism]]\"\ncategory: \"Default\"", text)
         self.assertIn("How can both claims stand?\n\n***\n\n", text)
         self.assertIn("First exact idea.\n\nhttps://example.com/a", text)
         self.assertIn("A conflicting idea.\n\nhttps://example.com/b", text)

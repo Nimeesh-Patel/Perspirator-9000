@@ -114,7 +114,7 @@ reads those policies in full. The tool does not rank policy relevance.
 
 Source adapters recover facts only. `x_posts.py` is one adapter, not the
 architecture. `source_to_notes.py` checks a plan's mechanical consequences—
-coverage, unique assignment, resolvable `up:` links, ordinary Problem Note
+coverage, unique assignment, resolvable and YAML-safe `up:` links, ordinary Problem Note
 structure, exact source text and URLs, and no overwrite. The agent remains
 responsible for explaining the problems, grouping sources, choosing relations,
 and preserving conflicts.
