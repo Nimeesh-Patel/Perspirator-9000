@@ -148,6 +148,13 @@ def main():
         check("exempt folder excluded", not any(
             m["note"].startswith(".trash")
             for m in json.loads(str(np.load(out)["meta"]))))
+        loaded = nb.load_index(root, index=out, refresh_index=False)
+        check("shared index loader exposes aligned metadata and vectors",
+              len(loaded["meta"]) == len(loaded["vectors"]) == base)
+        check("lexical overlap remains an independent neighbour signal",
+              nb.lexical_overlap(
+                  "recurring cultural criticism preserves rational correction",
+                  "recurring cultural criticism prevents rational correction") > 0.5)
 
         stub2 = StubEmbedder()
         r2 = nb.refresh(root, config, out, embedder=stub2)

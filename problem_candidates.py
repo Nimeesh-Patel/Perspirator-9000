@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rank memory knowledge that may deserve a `***` problem note.
 
-Structural only: this script counts, compares, and reports. Which signals run,
+Retrieval and structure only: this script ranks, counts, and reports. Which signals run,
 their thresholds, which notes are exempt, and the shape of a draft all live in
 the vault at memory/perspirator/Candidate Selection.md, so the selection logic
 is editable without touching code.
@@ -16,21 +16,13 @@ from pathlib import Path
 
 CONFIG_NOTE = ("memory", "perspirator", "Candidate Selection.md")
 
-STOPWORDS = set("""
-a an and are as at be because been before being between both but by can could did do does
-doing done each even for from further had has have having how if in into is it its more most
-no nor not of off on once only or other our out over own same should so some such than that
-the their them then there these they this those through to too under until up very was were
-what when where which while who whom why will with within without would yet you your
-problem problems note notes vault agent current remains remain rather still must may might
-""".split())
-
 PROBLEMISH = re.compile(r"problem|conflict|criticism|question", re.I)
 
 # One structural parser for the whole toolkit; see note_chunks.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from note_chunks import (all_chunks, bullets, read_note as read,  # noqa: E402
                          section, vault_links)
+from neighbour import lexical_overlap, load_index  # noqa: E402
 
 
 def load_config(vault):
@@ -54,10 +46,6 @@ def load_config(vault):
     return signals, exempt, template
 
 
-def tokens(sentence):
-    return {w for w in re.findall(r"[a-z][a-z-]{3,}", sentence.lower())
-            if w not in STOPWORDS}
-
 
 def stated_problems(vault, exempt):
     """(note, statement) for every explicitly stated problem in memory/.
@@ -80,20 +68,54 @@ def stated_problems(vault, exempt):
     return found
 
 
-def signal_recurrence(memory, exempt, threshold):
-    items = stated_problems(memory, exempt)
+def signal_recurrence(vault, exempt, embedding_threshold, lexical_threshold,
+                      refresh_index=True):
+    """Surface recurring-problem candidates through the shared substrate.
+
+    Embedding and lexical proximity are independent retrieval conjectures. A
+    pair survives when either crosses its configured threshold; neither score
+    establishes that the statements really express the same problem.
+    """
+    items = stated_problems(vault, exempt)
+    loaded = load_index(vault, refresh_index=refresh_index)
+    normalized = lambda text: " ".join(text.split())
+    slots = {}
+    for index, meta in enumerate(loaded["meta"]):
+        slots.setdefault((meta["stem"], normalized(meta["text"])), index)
+
     hits = []
-    for (n1, a), (n2, b) in itertools.combinations(items, 2):
+    vectors = loaded["vectors"]
+    for (n1, left), (n2, right) in itertools.combinations(items, 2):
         if n1 == n2:
             continue
-        ta, tb = tokens(a), tokens(b)
-        if len(ta) < 4 or len(tb) < 4:
+        left_slot = slots.get((n1, normalized(left)))
+        right_slot = slots.get((n2, normalized(right)))
+        embedding = None
+        if left_slot is not None and right_slot is not None:
+            embedding = float(vectors[left_slot] @ vectors[right_slot])
+        lexical = lexical_overlap(left, right)
+        matched_by = []
+        if embedding is not None and embedding >= embedding_threshold:
+            matched_by.append("embedding")
+        if lexical >= lexical_threshold:
+            matched_by.append("lexical")
+        if not matched_by:
             continue
-        overlap = len(ta & tb) / len(ta | tb)
-        if overlap >= threshold:
-            hits.append({"signal": "recurrence", "score": round(overlap, 3),
-                         "where": [n1, n2], "text": a, "also": b})
-    hits.sort(key=lambda h: -h["score"])
+        hits.append({
+            "signal": "recurrence",
+            "embedding_score": round(embedding, 3) if embedding is not None else None,
+            "lexical_score": round(lexical, 3),
+            "matched_by": matched_by,
+            "where": [n1, n2],
+            "text": left,
+            "also": right,
+            "_rank": (len(matched_by),
+                      max((embedding or -1) / embedding_threshold,
+                          lexical / lexical_threshold)),
+        })
+    hits.sort(key=lambda hit: hit["_rank"], reverse=True)
+    for hit in hits:
+        del hit["_rank"]
     return hits
 
 
@@ -143,17 +165,14 @@ def signal_never_written(vault, min_referrers):
     return hits
 
 
-def render(template, problem, conjecture, source):
-    return (template.replace("{{PROBLEM}}", problem)
-            .replace("{{CONJECTURE}}", conjecture)
-            .replace("{{SOURCE}}", source))
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--no-refresh", action="store_true",
+                        help="use the neighbour index as-is")
     args = parser.parse_args()
 
     vault = Path(args.vault).expanduser().resolve(strict=False)
@@ -164,7 +183,12 @@ def main():
     signals, exempt, template = load_config(vault)
     hits = []
     if "recurrence" in signals:
-        hits += signal_recurrence(vault, exempt, signals["recurrence"][0])
+        thresholds = signals["recurrence"]
+        if len(thresholds) < 2 or any(value <= 0 for value in thresholds[:2]):
+            raise SystemExit("STOP: recurrence needs positive embedding and lexical "
+                             "thresholds in Candidate Selection.md")
+        hits += signal_recurrence(vault, exempt, thresholds[0], thresholds[1],
+                                  refresh_index=not args.no_refresh)
     if "hub-stub" in signals:
         a, b = signals["hub-stub"][:2]
         hits += signal_hub_stub(vault, int(a), int(b))
@@ -183,7 +207,12 @@ def main():
     if not hits:
         print("  no candidates above the configured thresholds")
     for hit in hits[:args.limit]:
-        print(f"[{hit['signal']} {hit['score']}] {' + '.join(hit['where'])}")
+        if hit["signal"] == "recurrence":
+            label = (f"recurrence {'+'.join(hit['matched_by'])} "
+                     f"embedding={hit['embedding_score']} lexical={hit['lexical_score']}")
+        else:
+            label = f"{hit['signal']} {hit['score']}"
+        print(f"[{label}] {' + '.join(hit['where'])}")
         print(f"    {hit['text'][:150]}")
         if hit.get("also"):
             print(f"    ~ {str(hit['also'])[:150]}")

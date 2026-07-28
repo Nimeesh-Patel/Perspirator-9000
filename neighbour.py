@@ -32,6 +32,7 @@ is disposable and regenerable from the Markdown.
 import argparse
 import hashlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,27 @@ from note_chunks import (bullets, chunks_for_note, extract_links,  # noqa: E402
                          vault_links)
 
 CONFIG_NOTE = ("memory", "perspirator", "Neighbour Retrieval.md")
+
+LEXICAL_STOPWORDS = set("""
+a an and are as at be because been before being between both but by can could did do does
+doing done each even for from further had has have having how if in into is it its more most
+no nor not of off on once only or other our out over own same should so some such than that
+the their them then there these they this those through to too under until up very was were
+what when where which while who whom why will with within without would yet you your
+problem problems note notes vault agent current remains remain rather still must may might
+""".split())
+
+
+def lexical_overlap(left, right):
+    """Cheap independent retrieval signal; never a semantic-identity test."""
+    def tokens(text):
+        return {word for word in re.findall(r"[a-z][a-z-]{3,}", text.lower())
+                if word not in LEXICAL_STOPWORDS}
+
+    a, b = tokens(left), tokens(right)
+    if len(a) < 4 or len(b) < 4:
+        return 0.0
+    return len(a & b) / len(a | b)
 
 
 def load_config(vault):
@@ -208,6 +230,35 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
             "seconds": round(elapsed, 1), "path": out}
 
 
+def load_index(vault, index=None, refresh_index=True):
+    """Load the configured neighbour artifact for reuse by any consumer."""
+    import numpy as np
+
+    vault = Path(vault).expanduser().resolve()
+    config = load_config(vault)
+    index = Path(index).expanduser() if index else config["index"]
+    if not index.is_file():
+        raise SystemExit(f"STOP: no index at {index}. Run `neighbour.py index` first.")
+
+    stale = None
+    if refresh_index:
+        stale = refresh(vault, config, index)
+    data = np.load(index, allow_pickle=False)
+    header = json.loads(str(data["header"]))
+    if header.get("model") != config["model"]:
+        raise SystemExit(f"STOP: index model {header.get('model')!r} != config "
+                         f"{config['model']!r}; rebuild the index.")
+    return {
+        "vault": vault,
+        "config": config,
+        "index": index,
+        "stale": stale,
+        "header": header,
+        "meta": json.loads(str(data["meta"])),
+        "vectors": data["vectors"],
+    }
+
+
 def cmd_index(args):
     vault = Path(args.vault).expanduser().resolve()
     config = load_config(vault)
@@ -223,28 +274,15 @@ def cmd_index(args):
 
 
 def cmd_match(args):
-    import numpy as np
-    vault = Path(args.vault).expanduser().resolve()
-    config = load_config(vault)
-    index = Path(args.index).expanduser() if args.index else config["index"]
-    if not index.is_file():
-        raise SystemExit(f"STOP: no index at {index}. Run `neighbour.py index` first.")
-
-    stale = None
-    if not args.no_refresh:
-        stale = refresh(vault, config, index)
-        if stale["notes_changed"] or stale["notes_removed"]:
-            print(f"refreshed: {stale['notes_changed']} notes changed, "
-                  f"{stale['notes_removed']} removed, {stale['embedded']} chunks "
-                  f"re-embedded ({stale['seconds']}s)", file=sys.stderr)
-
-    data = np.load(index, allow_pickle=False)
-    header = json.loads(str(data["header"]))
-    if header.get("model") != config["model"]:
-        raise SystemExit(f"STOP: index model {header.get('model')!r} != config "
-                         f"{config['model']!r}; rebuild the index.")
-    meta = json.loads(str(data["meta"]))
-    vectors = data["vectors"]
+    loaded = load_index(
+        args.vault, index=args.index, refresh_index=not args.no_refresh)
+    vault, config, index = loaded["vault"], loaded["config"], loaded["index"]
+    stale = loaded["stale"]
+    if stale and (stale["notes_changed"] or stale["notes_removed"]):
+        print(f"refreshed: {stale['notes_changed']} notes changed, "
+              f"{stale['notes_removed']} removed, {stale['embedded']} chunks "
+              f"re-embedded ({stale['seconds']}s)", file=sys.stderr)
+    header, meta, vectors = loaded["header"], loaded["meta"], loaded["vectors"]
 
     source_note = None
     if args.file:

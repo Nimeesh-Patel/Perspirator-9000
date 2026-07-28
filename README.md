@@ -92,6 +92,7 @@ task actually needs both bodies of knowledge.
                     │
                     ▼
    <vault>/.perspirator/neighbours.npz       (derived vectors + provenance)
+                    ├──────────► problem_candidates recurrence
                     │
  query text/file ───┼── current vault link graph
                     ▼
@@ -109,12 +110,12 @@ structural evidence to the agent:
 
 - `problem_index.py` does not consume neighbour results. Its JSON is used by
   agent-side ingest/deduplication and connection work.
-- `problem_candidates.py` does not consume neighbour results. It computes the
-  signals configured in `Candidate Selection.md` and returns candidates for
-  judgment.
-- `neighbour.py match` is the only consumer of the `.npz` neighbour index. Its
-  ranked matches are consumed by the agent for frontier expansion, possible
-  placement, and checks for already-written material.
+- `problem_candidates.py` consumes the neighbour index only for recurrence
+  retrieval. It combines embedding and lexical candidate signals configured in
+  `Candidate Selection.md`; it does not infer that a pair is the same problem.
+- `neighbour.py match` and recurrence retrieval in `problem_candidates.py`
+  consume the same `.npz` index. Both return proximity candidates for agent
+  judgment; neither promotes proximity into a semantic conclusion.
 - Similarity, recurrence, relevance, placement, criticism, and identity are not
   interchangeable. The tools produce candidates; the active runtime governs
   the explanatory judgment made from them.
@@ -144,10 +145,15 @@ structural evidence to the agent:
 | `note_chunks.py` | Vault Markdown; optional corpus/side filters | Paragraph/list/fence chunks with provenance; CLI text or JSON | `problem_candidates.py`, `neighbour.py`, and users; parsing helpers are also imported by `problem_index.py` and `doctor.py` |
 | `problem_index.py` | Vault root and exclusions | JSON array of non-`memory/` problem notes, to stdout or `--out` | Agent-side ingest/deduplication and connection work |
 | `problem_candidates.py` | Vault, `Candidate Selection.md`, memory chunks, vault link graph | Ranked candidate report or JSON, including the configured draft template | Agent or human deciding whether to create a problem note |
-| `neighbour.py index` | Vault chunks and `Neighbour Retrieval.md` | Disposable `.npz` containing vectors, chunk IDs, metadata, and a freshness header | `neighbour.py match` only |
+| `neighbour.py index` | Vault chunks and `Neighbour Retrieval.md` | Disposable `.npz` containing vectors, chunk IDs, metadata, and a freshness header | `neighbour.py match` and recurrence retrieval in `problem_candidates.py` |
 | `neighbour.py match` | Query text/file/stdin, `.npz`, filters, current link graph | Ranked chunk records as text or JSON; refreshes the index unless `--no-refresh` | Agent making a semantic judgment |
+| `x_posts.py` | Arbitrary X/Twitter status URLs from arguments, files, or stdin | Canonical, ID-deduplicated source bundle with post text, parent/quote/media context, and possible repeated-text groups | Agent forming an explanatory grouping plan |
+| `source_to_notes.py` | Any normalized source bundle plus an agent-authored grouping plan | Validated, no-overwrite Problem Notes staged outside the vault or written to its root | Agent after neighbour-assisted problem formation and write authorization |
 | `test_note_chunks.py` | Synthetic Markdown fixtures | Pass/fail report and exit code | Development and CI |
 | `test_neighbour.py` | Synthetic vault and stub embedder | Pass/fail report and exit code; no model or network | Development and CI |
+| `test_x_posts.py` | Synthetic X syndication fixtures; no network | URL/token/parsing/deduplication pass/fail report | Development and CI |
+| `test_source_to_notes.py` | Synthetic source bundles, plans, and vaults | Coverage, link, rendering, and no-overwrite pass/fail report | Development and CI |
+| `test_problem_candidates.py` | Synthetic problem statements and neighbour vectors | Hybrid recurrence and signal-separation pass/fail report | Development and CI |
 
 `problem_candidates.py` is also part of the copied toolkit even though it is not
 in the abbreviated `problem_*.py` name. Adding a first-class agent is normally
@@ -215,18 +221,28 @@ template, and candidate records shaped roughly as:
 
 ```text
 {
-  signal: recurrence | hub-stub | never-written,
+  signal: recurrence,
+  embedding_score,
+  lexical_score,
+  matched_by: [embedding | lexical],
+  where[], text, also
+}
+
+or, for non-recurrence structural signals:
+
+{
+  signal: hub-stub | never-written,
   score,
-  where[],
-  text,
-  also?
+  where[], text, also?
 }
 ```
 
 `recurrence` compares statements found under problem-like headings in
-`memory/`; `hub-stub` finds a small undeveloped note with many referrers; and
-`never-written` finds repeated wikilink targets with no file. Thresholds and
-exemptions come from the vault configuration note, not from this README.
+`memory/` through the shared neighbour index and an independent lexical signal.
+`matched_by` says which threshold nominated the pair; it is not a claim that the
+same explanatory problem recurs. `hub-stub` finds a small undeveloped note with
+many referrers, and `never-written` finds repeated wikilink targets with no
+file. Thresholds and exemptions come from the vault configuration note.
 
 ### Neighbour index and match
 
@@ -315,7 +331,55 @@ python neighbour.py match --vault "/path/to/vault" \
   --file "/path/to/vault/some note.md" --corpus vault --k 10 --json
 python neighbour.py match --vault "/path/to/vault" \
   --text "a loose formulation" --corpus all --side all
+
+# A source adapter recovers facts into a source-neutral bundle.
+python x_posts.py --file "/path/to/x-links.txt" --out "/path/to/scratch/sources.json"
+
+# After explanatory grouping, validate coverage and stage ordinary notes.
+python source_to_notes.py "/path/to/scratch/sources.json" \
+  "/path/to/scratch/plan.json" --vault "/path/to/vault" \
+  --stage "/path/to/scratch/notes"
 ```
+
+### From external sources to a problem web
+
+The durable pipeline has three boundaries:
+
+1. a source adapter recovers stable identity, exact content, URL, and available
+   context without making thematic judgments;
+2. the agent uses the active runtime and two neighbour passes to explain the
+   problem situation and produce a grouping plan;
+3. `source_to_notes.py` checks the plan's mechanical invariants and renders
+   ordinary notes without overwriting existing files.
+
+`x_posts.py` is only one source adapter. It removes repeated status IDs and
+reports possible repeated text while keeping every distinct post. Another
+platform needs another adapter into the same `{id, text, url}` source bundle,
+not another note-creation implementation.
+
+Query `neighbour.py` first with source content to recover the existing problem
+situation, then with each drafted problem to find candidate parents, related
+problems, rival formulations, and conflicts. Read surfaced problem sides before
+their conjectures. Group sources only when they contribute to the same
+explanatory problem. A conflict between sources or between a source and the
+vault is itself a candidate problem; preserving it is part of coherence, not a
+failure of tidiness. Neighbour scores nominate a frontier and never decide a
+relationship or truth.
+
+`source_to_notes.py` then enforces what can be decided structurally: every
+source is assigned exactly once unless omission is explicitly allowed; no
+source is assigned to two notes; every planned `up:` target resolves when a
+vault is supplied; all exact source text and links appear on the idea side; and
+no existing note is overwritten. It does not invent a problem, group sources,
+or choose links. Those are explanatory judgments expressed in the plan.
+
+This does not supersede `problem_candidates.py`. That tool answers a different
+question: which recurring or neglected knowledge already inside `memory/` may
+deserve a Problem Note. Its configured draft form remains useful; its unused
+code-level renderer was removed because rendering an external source plan now
+has one owner. Its recurrence signal now consumes the shared neighbour index
+and keeps lexical overlap only as an explicitly separate retrieval signal;
+neither score is treated as explanatory identity.
 
 Neighbour queries also accept `--stdin`, `--folder`, `--side`, `--index`, and
 `--no-refresh`. `--corpus all` and `--side all` explicitly mean no filter. The
@@ -348,18 +412,24 @@ The code reads these notes rather than duplicating their editable choices.
 | Structural scripts | Deterministic note structure and derived retrieval artifacts | Required only when those facts are needed |
 | Write access | Approved note changes and required run reports | Required only for the relevant write |
 
-All structural scripts read Markdown directly and do not require Obsidian to be
-running. Python 3 is sufficient for every tool except `neighbour.py`, whose
-embedding path additionally imports `numpy`, `torch`, and `transformers`.
-Nothing else imports those dependencies.
+All structural scripts operate without Obsidian. The vault tools read Markdown
+directly; `x_posts.py` reads X's public syndication endpoint and therefore
+requires network access. Python 3 is sufficient for every tool except the neighbour subsystem:
+`neighbour.py` imports `numpy`, `torch`, and `transformers` on its embedding
+paths, and recurrence retrieval in `problem_candidates.py` reuses that module
+and index rather than implementing a second ranker.
 
 ## Development and verification
 
 ```bash
 python -m py_compile adapters.py install.py doctor.py problem_half.py \
-  note_chunks.py problem_index.py problem_candidates.py neighbour.py
+  note_chunks.py problem_index.py problem_candidates.py neighbour.py \
+  source_to_notes.py x_posts.py
 python test_note_chunks.py
 python test_neighbour.py
+python test_problem_candidates.py
+python test_source_to_notes.py
+python test_x_posts.py
 python doctor.py --target All --vault "/path/to/vault"
 ```
 
