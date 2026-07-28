@@ -10,11 +10,13 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 import neighbour as nb  # noqa: E402
+import problem_candidates as pc  # noqa: E402
 
 FAILS = []
 
@@ -155,6 +157,29 @@ def main():
               nb.lexical_overlap(
                   "recurring cultural criticism preserves rational correction",
                   "recurring cultural criticism prevents rational correction") > 0.5)
+        left = ("How can a criticism-preserving institution remain corrigible "
+                "when its leaders become attached to authority?")
+        right = ("What lets an organisation replace entrenched governors while "
+                 "retaining practices that expose mistakes?")
+        write(root, "memory/Left.md", f"## Problems\n\n{left}\n")
+        write(root, "memory/Right.md", f"## Questions\n\n{right}\n")
+        recurrence_index = {
+            "meta": [
+                {"stem": "Left", "text": left},
+                {"stem": "Right", "text": right},
+            ],
+            "vectors": np.array([[1.0, 0.0], [0.95, 0.0]], dtype="float32"),
+        }
+        with patch.object(pc, "load_index", return_value=recurrence_index):
+            recurrence = pc.signal_recurrence(
+                root, set(), embedding_threshold=0.9,
+                lexical_threshold=0.9, refresh_index=False)
+        check("candidate recurrence reuses the neighbour substrate",
+              len(recurrence) == 1
+              and recurrence[0]["matched_by"] == ["embedding"]
+              and recurrence[0]["lexical_score"] < 0.9)
+        (root / "memory" / "Left.md").unlink()
+        (root / "memory" / "Right.md").unlink()
 
         stub2 = StubEmbedder()
         r2 = nb.refresh(root, config, out, embedder=stub2)

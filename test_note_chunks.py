@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import note_chunks as nc
+import policy_index as pi
 
 FAILS = []
 
@@ -140,6 +141,50 @@ def main():
               nc.chunks_for_note(build(root, "empty.md", ""), root) == [])
         check("frontmatter-only note returns no chunks",
               nc.chunks_for_note(build(root, "fm.md", "---\ntitle: x\n---\n"), root) == [])
+
+        # --- active policy surface ---------------------------------------
+        build(root, "memory/policies/Policy Loader.md", """---
+title: Policy Loader
+type: configuration
+status: active
+---
+configuration only
+""")
+        policy = build(root, "memory/policies/Explanatory.md", """---
+title: Explanatory Implementation
+type: policy
+status: active
+---
+## Problem
+
+How should a mechanism vary?
+
+## Conjecture
+
+Prefer an explanatory implementation.
+""")
+        build(root, "memory/policies/Draft.md", """---
+title: Draft
+type: policy
+status: draft
+---
+""")
+        surface = pi.active_policy_surface(root)
+        check("policy surface contains active policies but not configuration/drafts",
+              surface == [{
+                  "title": "Explanatory Implementation",
+                  "path": "memory/policies/Explanatory.md",
+                  "problem": "How should a mechanism vary?",
+              }], str(surface))
+        policy.write_text(policy.read_text(encoding="utf-8").replace(
+            "## Conjecture\n\nPrefer an explanatory implementation.\n", ""),
+            encoding="utf-8")
+        try:
+            pi.active_policy_surface(root)
+            check("malformed active policy is refused", False, "no ValueError")
+        except ValueError as exc:
+            check("malformed active policy is refused",
+                  "missing Conjecture" in str(exc), str(exc))
 
     print()
     print(f"{'FAILED: ' + ', '.join(FAILS) if FAILS else 'all checks passed'}")

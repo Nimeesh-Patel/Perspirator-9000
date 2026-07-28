@@ -22,6 +22,7 @@ def check(label, ok, detail=""):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from note_chunks import frontmatter_fields  # noqa: E402,F401
+from policy_index import active_policy_surface  # noqa: E402
 
 
 def normalized_adapter(text, vault, tools_dir):
@@ -49,6 +50,12 @@ def validate_vault(vault):
                       vault / "memory" / "policies" / "Policy Loader.md")
     check_active_note("candidate selection note", base / "Candidate Selection.md")
     check_active_note("neighbour retrieval note", base / "Neighbour Retrieval.md")
+    try:
+        policies = active_policy_surface(vault)
+        check("active policy surface is well formed", True,
+              f"{len(policies)} policies")
+    except ValueError as exc:
+        check("active policy surface is well formed", False, str(exc))
 
     for name in ("proposals", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())
@@ -80,7 +87,7 @@ def validate_memory_freshness(vault):
         return
 
     notes = sorted(p for p in memory.rglob("*.md") if p.is_file())
-    stale_updated, wrong_permalink, formless = [], [], []
+    stale_updated, wrong_permalink = [], []
 
     for path in notes:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
@@ -97,16 +104,11 @@ def validate_memory_freshness(vault):
             if not permalink.lower().startswith(folder + "/"):
                 wrong_permalink.append(f"{rel} -> {permalink}")
 
-        if path.parent.name == "policies" and fields.get("type") != "configuration":
-            if "## Problem" not in text or "## Conjecture" not in text:
-                formless.append(rel)
 
     check("no note carries a hand-maintained 'updated:' field",
           not stale_updated, ", ".join(stale_updated[:4]) or "")
     check("every permalink matches the note's folder",
           not wrong_permalink, ", ".join(wrong_permalink[:3]) or "")
-    check("every policy states a problem and a conjecture",
-          not formless, ", ".join(formless[:4]) or "")
 
     # Reported, not failed: a note nothing points at has already been forgotten.
     targets = {p: 0 for p in notes}

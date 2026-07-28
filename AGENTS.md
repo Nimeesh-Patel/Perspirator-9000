@@ -1,16 +1,25 @@
 # Agent project instructions
 
-Read `README.md` for the packaging model. Perspirator's active behaviour is
-defined only by the configured vault runtime at
-`memory/perspirator/Perspirator.md`, and the bootstrap contract every agent
-follows is the vault note `memory/perspirator/Bootstrap.md`. This repository
-owns packaging and validation, not instruction text.
+Read `README.md` for the architecture and packaging model. Perspirator's active
+behaviour is defined by the configured vault runtime at
+`memory/perspirator/Perspirator.md`; every agent enters through
+`memory/perspirator/Bootstrap.md`.
+
+Keep executable mechanisms, adapters, invariants, and structural validation in
+repository code. Keep criticisable theory, semantic instructions, criteria,
+configuration, and run reports in vault Markdown so they can change on the next
+run. This is a feedback-speed boundary, not a claim that code is theory-free.
+Do not duplicate a current semantic rule in code and Markdown: code should load
+and validate the Markdown-owned rule.
 
 Install with `python install.py --target <ClaudeCode|Codex|All|Custom>`;
 `Custom` also needs `--destination`. The adapter table lives in `adapters.py`,
 so adding an agent is one row there.
 
-Python 3 is required for the structural tools; `neighbour.py` additionally needs numpy, torch, and transformers, which nothing else imports. Run `test_note_chunks.py` and `test_neighbour.py` after touching either parser. Obsidian CLI availability is a
+Python 3 is required for the structural tools. `neighbour.py` additionally
+needs numpy, torch, and transformers, which nothing else imports. Tests are
+grouped by contract: run `test_note_chunks.py`, `test_neighbour.py`, and
+`test_sources.py` for affected surfaces. Obsidian CLI availability is a
 capability, not a universal installation prerequisite. Run `doctor.py` with
 the target that was installed.
 
