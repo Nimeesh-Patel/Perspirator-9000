@@ -1,180 +1,374 @@
 # Perspirator 9000
 
 Perspirator is an agent-neutral research toolkit for an Obsidian vault of
-Popperian/Deutschian problem notes. It recovers relevant context, follows the
-problem graph selectively, draws explanatory implications, exposes
-assumptions, and states conflicts between conjectures as precise problems.
+Popperian/Deutschian problem notes. It helps an agent recover relevant context,
+traverse a problem graph selectively, and distinguish deterministic facts about
+files from explanatory judgments about ideas.
 
-Its architecture has four deliberately separate parts:
+Perspirator is deliberately split in two. The repository owns packaging,
+validation, and deterministic structural tools. The vault owns the active
+runtime, policies, configuration, research notes, and other semantic authority.
+
+## Architecture
+
+### Runtime and deployment
 
 ```text
-one canonical bootstrap contract      vault memory/perspirator/Bootstrap.md
-+ one canonical vault runtime         vault memory/perspirator/Perspirator.md
-+ one structural toolkit              note_chunks.py / problem_*.py / neighbour.py
-+ thin discovery adapters             rendered from repository SKILL.md
+Perspirator 9000 repository                         (packaging source)
+SKILL.md + adapters.py + install.py + doctor.py + structural tools
+                         │
+                         │ install.py resolves <vault> and <tools-dir>,
+                         │ then copies the adapter and toolkit
+          ┌──────────────┼────────────────────┐
+          │              │                    │
+          ▼              ▼                    ▼
+ Claude Code          Codex                Custom agent
+ ~/.claude/...        ~/.agents/...        --destination ...
+ perspirate.md        perspirate/SKILL.md   rendered SKILL.md
+          └──────────────┼────────────────────┘
+                         │ each adapter is only a locator
+                         ▼
+       <vault>/memory/perspirator/Bootstrap.md       (canonical bootstrap)
+                         │
+             ┌───────────┼──────────────────────┐
+             │           │                      │
+             ▼           ▼                      ▼
+  Perspirator.md    reporting and           copied structural
+  active runtime    authority duties         toolkit path
+             └───────────┼──────────────────────┘
+                         ▼
+                     agent run
+       ┌─────────────────┼────────────────────────┐
+       │                 │                        │
+       ▼                 ▼                        ▼
+ full-vault reads   Basic Memory MCP         structural tools
+ all Markdown       optional; memory/ only   deterministic facts
+       └─────────────────┼────────────────────────┘
+                         ▼
+       explanatory judgment, response, approved writes,
+       and a run report after substantial traversal/write
 ```
 
-Every text an agent reads is a vault note; this repository keeps only
-locators, structural tools, the installer, and validation. `SKILL.md` is a
-template holding two path placeholders and one instruction — read
-`Bootstrap.md` and follow it, or STOP. Editing the bootstrap contract or the
-runtime therefore takes effect on the next run; **a reinstall is needed only
-when a path changes.**
+The adapter contains two resolved paths, not a second copy of Perspirator's
+reasoning policy. Every run follows the adapter to `Bootstrap.md`, which loads
+the current runtime and policies from the vault. Consequently, editing an
+active vault instruction or configuration note takes effect on the next run;
+changing repository tools or installed paths requires reinstalling the copied
+adapter/toolkit.
 
-Because the bootstrap contract is a vault note, a Git clone alone does not
-reproduce agent behaviour: it reproduces the locator that finds it.
+Basic Memory and full-vault access are different paths. Basic Memory provides
+cross-app recall over `<vault>/memory/` only. Direct filesystem or Obsidian
+access exposes the rest of the vault. Neither substitutes for the other when a
+task actually needs both bodies of knowledge.
 
-## Authority and capabilities
+### Internal structural dataflow
 
-The active runtime is authoritative for traversal, relevance, conflicts, and
-write behaviour; the bootstrap note is authoritative for loading, tools,
-reporting, and authority. This README describes packaging only — where the two
-disagree about behaviour, the vault notes win. Different agents can have
-different capabilities, so the runtime requires disclosing, before substantial
-work, any missing capability that limits the answer — never implying access
-that did not exist.
+```text
+                         <vault>/**/*.md
+                                │
+                    problem_half.split_note()
+                     ┌──────────┼─────────────────────┐
+                     │          │                     │
+                     ▼          ▼                     ▼
+          problem_half CLI   note_chunks.py      problem_index.py
+          one note/status    side classification problem-note filter
+                                │                     ▲
+                                │ chunks + helpers    │ split + helpers
+             ┌──────────────────┼─────────────────────┤
+             │                  │                     │
+             ▼                  ▼                     ▼
+   note_chunks CLI    problem_candidates.py    problem_index JSON
+   chunk records      + Candidate Selection    problem map
+                             │                     │
+                             ▼                     └──────► agent
+                      ranked candidates
+                             │
+                             └────────────────────────────► agent
 
-| Capability | What it enables | Universal requirement? |
+   note_chunks.py + Neighbour Retrieval.md
+                    │
+                    ▼
+           neighbour.py index
+                    │
+                    ▼
+   <vault>/.perspirator/neighbours.npz       (derived vectors + provenance)
+                    │
+ query text/file ───┼── current vault link graph
+                    ▼
+           neighbour.py match
+                    │
+                    ▼
+       ranked neighbouring chunks ───────────────────────► agent
+
+   note_chunks.frontmatter_fields() ──► doctor.py ──► validation report
+```
+
+There is no hidden daemon and no automatic chain in which one derived result
+becomes a conclusion. The scripts share parsing functions, then return
+structural evidence to the agent:
+
+- `problem_index.py` does not consume neighbour results. Its JSON is used by
+  agent-side ingest/deduplication and connection work.
+- `problem_candidates.py` does not consume neighbour results. It computes the
+  signals configured in `Candidate Selection.md` and returns candidates for
+  judgment.
+- `neighbour.py match` is the only consumer of the `.npz` neighbour index. Its
+  ranked matches are consumed by the agent for frontier expansion, possible
+  placement, and checks for already-written material.
+- Similarity, recurrence, relevance, placement, criticism, and identity are not
+  interchangeable. The tools produce candidates; the active runtime governs
+  the explanatory judgment made from them.
+
+## How a run works
+
+1. The user or agent discovery invokes an installed adapter.
+2. The adapter locates `memory/perspirator/Bootstrap.md` and the copied toolkit.
+3. The bootstrap requires the active runtime and policies to be loaded, or the
+   run stops rather than improvising Perspirator behaviour.
+4. The agent recalls current project state, follows selected vault relations,
+   and calls structural tools when their facts are useful.
+5. The agent interprets those facts in the current problem situation. Scripts
+   never decide which conjecture is true, relevant, novel, or well placed.
+6. The agent returns the result, makes only authorized writes, and records the
+   required run report after substantial traversal or writing.
+
+## Components: inputs, outputs, and consumers
+
+| Component | Main inputs | Output or write | Who consumes it |
+|---|---|---|---|
+| `SKILL.md` | `{{VAULT_PATH}}`, `{{TOOLS_DIR}}` | Rendered discovery adapter containing the two paths and the bootstrap instruction | Claude Code, Codex, or a custom agent |
+| `adapters.py` | Target name, adapter template, vault path, toolkit path | Adapter metadata and rendered adapter text | `install.py` and `doctor.py` |
+| `install.py` | Target, vault, destination overrides, repository files | A rendered adapter plus copies of every file in `SCRIPT_NAMES` | Agent discovery and later tool calls |
+| `doctor.py` | Vault, target, source template, installed directories | Human-readable checks and exit code; no durable artifact | User, CI, or installer verification |
+| `problem_half.py` | One Markdown file; optional `--json` and `--full-on-miss` | Problem side, frontmatter, and structural status on stdout/stderr | Agent; its `split_note()` function is imported by `note_chunks.py` and `problem_index.py` |
+| `note_chunks.py` | Vault Markdown; optional corpus/side filters | Paragraph/list/fence chunks with provenance; CLI text or JSON | `problem_candidates.py`, `neighbour.py`, and users; parsing helpers are also imported by `problem_index.py` and `doctor.py` |
+| `problem_index.py` | Vault root and exclusions | JSON array of non-`memory/` problem notes, to stdout or `--out` | Agent-side ingest/deduplication and connection work |
+| `problem_candidates.py` | Vault, `Candidate Selection.md`, memory chunks, vault link graph | Ranked candidate report or JSON, including the configured draft template | Agent or human deciding whether to create a problem note |
+| `neighbour.py index` | Vault chunks and `Neighbour Retrieval.md` | Disposable `.npz` containing vectors, chunk IDs, metadata, and a freshness header | `neighbour.py match` only |
+| `neighbour.py match` | Query text/file/stdin, `.npz`, filters, current link graph | Ranked chunk records as text or JSON; refreshes the index unless `--no-refresh` | Agent making a semantic judgment |
+| `test_note_chunks.py` | Synthetic Markdown fixtures | Pass/fail report and exit code | Development and CI |
+| `test_neighbour.py` | Synthetic vault and stub embedder | Pass/fail report and exit code; no model or network | Development and CI |
+
+`problem_candidates.py` is also part of the copied toolkit even though it is not
+in the abbreviated `problem_*.py` name. Adding a first-class agent is normally
+one row in `adapters.py`; the installer and doctor both read that same table.
+
+## Core data contracts
+
+### Problem half
+
+With `--json`, `problem_half.py` emits one object:
+
+```text
+{
+  path,
+  status: problem-note | empty-problem | no-separator |
+          missing-file | unreadable,
+  has_separator,
+  frontmatter,
+  problem,
+  body?,       # only --full-on-miss on a no-separator note
+  error?       # missing or unreadable file
+}
+```
+
+A line exactly equal to `***` separates the problem above from the conjecture
+below. This is the sole owner of that split. A readable non-problem note is a
+structural finding, not an execution error.
+
+### Chunk
+
+`note_chunks.py` turns Markdown into paragraph-sized records:
+
+```text
+{
+  note, stem, heading[], start, end, text,
+  side: problem | answer | none,
+  corpus: memory | vault,
+  links[]
+}
+```
+
+Offsets point back into the normalized file text. Multi-line list items and
+fenced blocks stay whole. The parser reports structure only: it does not assign
+importance, recurrence, candidacy, or meaning.
+
+### Problem index
+
+`problem_index.py` emits one record per note whose body contains the `***`
+separator:
+
+```text
+{
+  name, path, problem, category, up[], links[], stub
+}
+```
+
+The default scan excludes Obsidian internals, attachments, trash, and
+`memory/`. The output is a current map of problem notes, not a database. If it
+disagrees with Markdown, regenerate it.
+
+### Candidate result
+
+`problem_candidates.py --json` emits the enabled signals, exemptions, draft
+template, and candidate records shaped roughly as:
+
+```text
+{
+  signal: recurrence | hub-stub | never-written,
+  score,
+  where[],
+  text,
+  also?
+}
+```
+
+`recurrence` compares statements found under problem-like headings in
+`memory/`; `hub-stub` finds a small undeveloped note with many referrers; and
+`never-written` finds repeated wikilink targets with no file. Thresholds and
+exemptions come from the vault configuration note, not from this README.
+
+### Neighbour index and match
+
+The `.npz` has four top-level arrays:
+
+```text
+vectors   float32 [chunk, embedding-dimension]
+ids       JSON list of stable chunk IDs
+meta      JSON list of chunk provenance and text
+header    JSON object: model, index shape, dimensions, counts,
+          per-note mtime/size stamps, build time
+```
+
+A JSON match contains `query_note`, the index `header`, and results carrying
+`rank`, ordinal `score`, `note`, `heading`, `side`, `corpus`, `already_links`,
+`shares_referrers`, and `snippet`. A score is proximity, not confidence or
+correctness.
+
+The index refresh is incremental: unchanged note vectors are reused, changed
+chunks are re-embedded, and deleted notes disappear. A model change or a change
+to indexed corpora, sides, or exemptions requires `index --rebuild`; vectors
+from incompatible configurations are never silently mixed.
+
+## Authority and data lifetime
+
+| Thing | Status | Consequence |
 |---|---|---|
-| Basic Memory MCP | Cross-app problem map and shared working notes | No; direct `memory/` access can substitute |
-| Direct `memory/` access | Filesystem fallback for the same problem map | No; MCP can substitute |
-| Full-vault filesystem | Problem-note reads and structural traversal | Required only for tasks that need the vault |
-| Obsidian CLI | Search context, backlinks, properties, and CLI writes | No; requires Obsidian running when used |
-| Structural scripts | Deterministic note halves and derived indexes | Required when their structural facts are needed |
-| Write access | Run reports and approval-gated writes | Required only for the relevant write |
+| Vault Markdown and problem notes | Authoritative research material | Derived tools must yield when they disagree with the files |
+| `memory/perspirator/Bootstrap.md` | Canonical loading and authority contract | Every adapter points here; a missing/inactive runtime stops the run |
+| `memory/perspirator/Perspirator.md` and active policies | Canonical behaviour and reasoning policy | Repository summaries cannot override them |
+| `Candidate Selection.md` / `Neighbour Retrieval.md` | Authoritative configuration for those mechanisms | Editing the note changes the next tool run or index build |
+| Repository Python and `SKILL.md` | Canonical packaging and deterministic mechanism | Reinstall after changing copied repository files |
+| Installed adapter and toolkit | Generated deployment copies | `doctor.py` detects drift from repository source |
+| Problem-index JSON | Derived and disposable | Generate into scratch space; never edit it as authority |
+| `.perspirator/neighbours.npz` | Derived and disposable | `neighbour.py` refreshes or rebuilds it from Markdown |
+| CLI match/candidate output | Transient evidence | The agent must interpret it before any write or conclusion |
+| `memory/perspirator/runs/` reports | Durable audit of substantial runs | Shared across applications through the memory layer |
 
-`problem_half.py` and `problem_index.py` read Markdown directly and do not need
-Obsidian to be running. Obsidian desktop and its CLI are useful or required for
-the particular capabilities that call them, not for every run.
+Repository changes are tracked in Git. Vault-note history belongs to the vault's
+sync/history mechanism. A Git clone reproduces the packaging source and
+locator template; it does not reproduce the configured vault runtime or the
+research corpus.
 
-## Repository files
-
-| File | Responsibility |
-|---|---|
-| `SKILL.md` | Adapter template: two path placeholders and the pointer to `Bootstrap.md`. No reasoning policy, no bootstrap contract. |
-| `adapters.py` | The one adapter table — name, output filename, default directory — imported by the installer and the doctor. |
-| `install.py` | Renders discovery adapters from `SKILL.md` and copies the toolkit. |
-| `doctor.py` | Target-aware validation of vault notes, scripts, and adapters. |
-| `problem_half.py` | Stable structural contract for extracting the problem half — sole owner of the `***` split. |
-| `note_chunks.py` | The one structural parser: frontmatter, wikilinks, headings, list items, offsets, `side`, `corpus`. Everything else imports it. |
-| `problem_index.py` | Derived, disposable problem-note index; excludes `memory/`. |
-| `neighbour.py` | Distributional neighbours of a piece of text. The only file with embedding dependencies. |
-| `test_note_chunks.py` / `test_neighbour.py` | Chunking, provenance, filtering, index freshness, and failure cases. Synthetic fixtures; no vault, no model. |
-| `CLAUDE.md` / `AGENTS.md` | Thin environment pointers, not semantic runtimes. |
-
-Python 3 is the only dependency of the structural toolkit. `neighbour.py` is
-the one exception — it needs `numpy`, `torch`, and `transformers`, and nothing
-else imports them, so the rest of the toolkit still runs on a bare Python.
-Adding a new agent is one row in `adapters.py`.
-
-## Installing
+## Install and validate
 
 ```bash
-python install.py --target ClaudeCode --vault "/path/to/vault"
-python doctor.py  --target ClaudeCode --vault "/path/to/vault"
+python install.py --target All --vault "/path/to/vault"
+python doctor.py  --target All --vault "/path/to/vault"
 ```
 
 | Target | Default destination | Invocation |
 |---|---|---|
 | `ClaudeCode` (default) | `~/.claude/commands/perspirate.md` | `/perspirate` |
-| `Codex` | `~/.agents/skills/perspirate/SKILL.md` | the `perspirate` skill by name or matching request |
-| `All` | both of the above | — |
-| `Custom` | `--destination` (required) | load the rendered `SKILL.md` in the agent |
+| `Codex` | `~/.agents/skills/perspirate/SKILL.md` | Invoke the `perspirate` skill by name or matching request |
+| `All` | Both first-class destinations | Either of the above |
+| `Custom` | `--destination` is required | Load the rendered `SKILL.md` in the agent |
 
-`--claude-dir`, `--codex-dir`, and `--destination` override destinations;
-`doctor.py` takes the same flags plus `--custom-dir`. Installs are idempotent:
-they replace only Perspirator's generated adapter and script copies and remove
-nothing else. An unsupported agent can instead read `SKILL.md` directly,
-resolving `{{VAULT_PATH}}` to the vault root and `{{TOOLS_DIR}}` to this
-repository.
+`--claude-dir`, `--codex-dir`, and `--destination` override install locations;
+`doctor.py` accepts the corresponding directories plus `--custom-dir`.
+Installation replaces only Perspirator's generated adapter and toolkit copies
+and leaves unrelated files alone.
 
-## Neighbour retrieval
+No reinstall is needed after editing the runtime, policies, candidate rules, or
+neighbour configuration in the same vault. Reinstall after moving the vault or
+toolkit, changing `SKILL.md`, or pulling changes to scripts that are copied into
+agent directories.
 
-One substrate, several uses. `neighbour.py` answers a single question — *which
-chunks are distributionally near this text?* — and callers decide what the
-answer is for:
+## Use the structural tools
 
 ```bash
+# Read one problem side without reading the conjecture first.
+python problem_half.py "/path/to/note.md" --json
+
+# Inspect normalized structural chunks.
+python note_chunks.py "/path/to/vault" --corpus vault --side problem --json
+
+# Build a disposable map for ingest/deduplication or connection work.
+python problem_index.py "/path/to/vault" --out "/path/to/scratch/problems.json"
+
+# Rank material that may deserve a problem note.
+python problem_candidates.py --vault "/path/to/vault" --json
+
+# Build or update the embedding index, then query it.
 python neighbour.py index --vault "/path/to/vault"
-python neighbour.py match --vault "/path/to/vault" --file "some note.md" --corpus vault --k 10
-python neighbour.py match --vault "/path/to/vault" --text "loose idea" --side problem --json
-python neighbour.py match --vault "/path/to/vault" --text "loose idea" --corpus all --side all
+python neighbour.py match --vault "/path/to/vault" \
+  --file "/path/to/vault/some note.md" --corpus vault --k 10 --json
+python neighbour.py match --vault "/path/to/vault" \
+  --text "a loose formulation" --corpus all --side all
 ```
 
-Recurrence, problem-candidate material, idea placement, link discovery, and
-frontier expansion during a run are *queries*, not modes: `--corpus`, `--side`,
-`--folder`, and `--k` are how a caller narrows the space. The substrate does not
-know which use is intended and never files, moves, links, merges, or creates
-anything.
+Neighbour queries also accept `--stdin`, `--folder`, `--side`, `--index`, and
+`--no-refresh`. `--corpus all` and `--side all` explicitly mean no filter. The
+mechanism is local-first: it uses a complete cached Hugging Face model without
+a network request, falls back to downloading on cache miss, and stops with a
+bounded error if neither is available.
 
-It explicitly does **not** claim that two passages state the same problem, that
-one belongs inside the other, that a result is a criticism or a rival
-conjecture, or that a note is the right destination. Every result carries rank,
-score, note, heading, `side`, `corpus`, and whether the two notes already link
-or share referrers — so *already contained* and *already connected* stay
-distinguishable from *possibly new*. Scores are ordinal; a score is not
-confidence.
+## Vault-owned configuration
 
-The mechanism — model, indexed corpora and sides, exemptions, index location,
-provenance fields — lives in `memory/perspirator/Neighbour Retrieval.md` and is
-edited there, not in code. `neighbour.py` stops if that note is missing or not
-`status: active`. `Candidate Selection.md` continues to own what counts as a
-candidate.
+| Vault note | What it controls |
+|---|---|
+| `memory/perspirator/Bootstrap.md` | Runtime loading, tool discovery, reporting duty, and authority |
+| `memory/perspirator/Perspirator.md` | Active research behaviour and explanatory method |
+| `memory/policies/Policy Loader.md` | Which policies are active for a run |
+| `memory/perspirator/Candidate Selection.md` | Candidate signals, thresholds, exemptions, and draft form |
+| `memory/perspirator/Neighbour Retrieval.md` | Embedding model, indexed corpora/sides, exclusions, and index path |
+| `memory/perspirator/runs/README.md` | Required structure of substantial-run reports |
 
-The index is disposable and regenerable: `<vault>/.perspirator/neighbours.npz`,
-a dot-folder Obsidian and `problem_index.py` both skip. Delete the file to
-remove it. Embedding dependencies (numpy, torch, transformers) are confined to
-`neighbour.py`; every other tool stays standard-library only.
+The code reads these notes rather than duplicating their editable choices.
+`doctor.py` verifies that required configuration notes exist and are active.
 
-Model loading is local-first. When the configured model is already complete in
-the Hugging Face cache, indexing and matching make no Hub request. A cache miss
-falls back to the normal download path; if neither source is available, the
-tool stops with a bounded error instead of leaking a requests traceback.
-`--corpus all` and `--side all` are explicit aliases for omitting those filters.
+## Capabilities and boundaries
 
-**Staying fresh is not scheduled and not remembered.** Every `match` levels the
-index against the vault before answering, and the cost tracks what changed, not
-the size of the vault: a note is re-read only when its mtime or size moved, a
-chunk is re-embedded only when its text changed, and deleted notes drop out
-with their vectors. Editing in Obsidian and querying immediately retrieves the
-edited text; `--no-refresh` skips the stat pass when the vault is known
-unchanged. A full build of 5,617 chunks takes ~140 s, an unchanged refresh is
-instant, and touching one note re-embeds only that note's changed chunks.
+| Capability | What it enables | Universal requirement? |
+|---|---|---|
+| Basic Memory MCP | Cross-app recall and shared working notes under `memory/` | No; direct `memory/` access can substitute |
+| Direct `memory/` access | Filesystem fallback for the same working set | No; Basic Memory MCP can substitute |
+| Full-vault filesystem | Problem-note reads and structural traversal | Required only when the task needs the wider vault |
+| Obsidian CLI | Search context, backlinks, properties, and CLI writes | No; it requires Obsidian running when used |
+| Structural scripts | Deterministic note structure and derived retrieval artifacts | Required only when those facts are needed |
+| Write access | Approved note changes and required run reports | Required only for the relevant write |
 
-Two changes can't be repaired incrementally and stop with an explicit message
-instead of silently mixing: a different model, and a change to the indexed
-corpora, sides, or exemptions. Both are fixed with `index --rebuild`.
+All structural scripts read Markdown directly and do not require Obsidian to be
+running. Python 3 is sufficient for every tool except `neighbour.py`, whose
+embedding path additionally imports `numpy`, `torch`, and `transformers`.
+Nothing else imports those dependencies.
 
-## Runtime and bootstrap
+## Development and verification
 
-Both are vault notes, and both are authoritative over anything written here:
+```bash
+python -m py_compile adapters.py install.py doctor.py problem_half.py \
+  note_chunks.py problem_index.py problem_candidates.py neighbour.py
+python test_note_chunks.py
+python test_neighbour.py
+python doctor.py --target All --vault "/path/to/vault"
+```
 
-- `memory/perspirator/Bootstrap.md` — load the runtime or refuse, structural
-  tools, run-report duty, authority rule.
-- `memory/perspirator/Perspirator.md` — the reasoning policy.
+The tests use synthetic fixtures. `test_neighbour.py` supplies a stub embedder,
+so it validates freshness, configuration changes, and local-first model loading
+without reading the real vault, downloading a model, or requiring network
+access.
 
-A problem note contains a line exactly equal to `***`: the problem is above it
-and the current conjecture below it. That structural fact is what the toolkit
-depends on; everything else about how to reason over it lives in the runtime,
-deliberately not in this README, so the two cannot drift apart.
-
-Runtime-note history is provided by Obsidian Sync rather than manual version
-numbers or a parallel changelog. Repository changes are tracked in Git; after
-a verified repository change, commit and push the scoped change so the remote
-remains the current recoverable source.
-
-## Doctor contract
-
-`doctor.py` defaults to `Auto`: it validates adapters that actually exist and
-does not fail a Codex-only setup because Claude Code is absent, or vice versa.
-An explicit target validates only that target (`All` validates both
-first-class adapters). Checks are grouped into vault notes, shared scripts,
-and adapter sections.
-
-It verifies that the runtime, `Bootstrap.md`, and the Policy Loader note exist
-and are `status: active`; that each adapter resolves both placeholders, names
-the `Bootstrap.md` path, points at its own toolkit, and renders exactly from
-the template; and that the installed scripts match the shared source byte for
-byte. When more than one adapter is present, it normalizes their
-target-specific paths and verifies that all of them share one bootstrap
-semantics and identical script bytes.
+`doctor.py` validates the active runtime/configuration notes, memory invariants,
+repository scripts, rendered adapters, installed script bytes, and
+cross-adapter consistency. `Auto` validates the first-class adapters it can
+actually discover; an explicit target validates only that target.
