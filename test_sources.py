@@ -84,6 +84,56 @@ class SourceAdapterTests(unittest.TestCase):
             x_posts.fetch_note_text(
                 "124", requester=lambda url, timeout, retries: payload)
 
+        article_post = x_fixture(
+            "125", "https://t.co/a", "article_author")
+        article_post["entities"]["urls"][0]["expanded_url"] = (
+            "https://x.com/i/article/999")
+        article_payload = {
+            "code": 200,
+            "tweet": {
+                "id": "125",
+                "article": {
+                    "id": "999",
+                    "title": "An &amp; Article",
+                    "content": {"blocks": [
+                        {"text": "First paragraph."},
+                        {"text": ""},
+                        {"text": "Second &amp; final paragraph."},
+                    ]},
+                },
+            },
+        }
+        article = x_posts.fetch_article(
+            "125", "999",
+            requester=lambda url, timeout, retries: article_payload)
+        self.assertEqual(
+            article["text"],
+            "An & Article\n\nFirst paragraph.\n\nSecond & final paragraph.",
+        )
+        article_record = x_posts.compact_record(
+            "125", article_post,
+            article_fetcher=lambda status_id, article_id: article)
+        self.assertEqual(article_record["text_source"], "x_article_full")
+        self.assertEqual(article_record["article"]["id"], "999")
+        commentary_post = x_fixture(
+            "126", "Commentary https://t.co/a", "article_author")
+        commentary_post["entities"]["urls"][0]["expanded_url"] = (
+            "https://x.com/i/article/999")
+        record = x_posts.compact_record(
+            "126", commentary_post,
+            article_fetcher=lambda status_id, article_id: article)
+        self.assertEqual(
+            record["text"],
+            "Commentary https://x.com/i/article/999\n\n" + article["text"],
+        )
+        self.assertEqual(article_record["text"], article["text"])
+
+        article_payload["tweet"]["article"]["id"] = "mismatch"
+        with self.assertRaisesRegex(RuntimeError, "unavailable or mismatched"):
+            x_posts.fetch_article(
+                "125", "999",
+                requester=lambda url, timeout, retries: article_payload)
+
         posts = {
             "1": x_fixture("1", "@a Same claim https://t.co/a", "one"),
             "2": x_fixture("2", "Same claim", "two"),
@@ -147,6 +197,97 @@ class SourceToNotesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
                 stn.write_notes([note], sources, Path(directory))
             self.assertEqual(target.read_text(encoding="utf-8"), "user content")
+
+    def test_existing_append_requires_explanation_and_exact_problem(self):
+        sources = stn.source_records([SOURCES[0]])
+        original = (
+            b"---\r\nup: null\r\ncategory: Default\r\n---\r\n\r\n"
+            b"What exists?\r\n\r\n***\r\n\r\nOriginal conjecture.\r\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            target.write_bytes(original)
+            plan = {"notes": [{
+                "file": "Existing.md",
+                "existing": True,
+                "problem": "What exists?",
+                "source_ids": ["a"],
+            }]}
+            with self.assertRaisesRegex(ValueError, "same_problem explanation"):
+                stn.validate_plan(plan, sources, vault=vault)
+
+            plan["notes"][0]["same_problem"] = "Both address what exists."
+            plan["notes"][0]["problem"] = "What existed?"
+            with self.assertRaisesRegex(ValueError, "exactly match"):
+                stn.validate_plan(plan, sources, vault=vault)
+
+            plan["notes"][0]["problem"] = "What exists?"
+            notes, unassigned = stn.validate_plan(plan, sources, vault=vault)
+            self.assertEqual(unassigned, [])
+            self.assertTrue(notes[0]["existing"])
+            self.assertEqual(notes[0]["same_problem"], "Both address what exists.")
+
+    def test_existing_append_stages_then_requires_explicit_live_guard(self):
+        sources = stn.source_records([SOURCES[0]])
+        original = (
+            b"---\r\nup: null\r\ncategory: Default\r\n---\r\n\r\n"
+            b"What exists?\r\n\r\n***\r\n\r\nOriginal conjecture.\r\n"
+        )
+        plan = {"notes": [{
+            "file": "Existing.md",
+            "existing": True,
+            "problem": "What exists?",
+            "same_problem": "The source answers the existing question directly.",
+            "source_ids": ["a"],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            target.write_bytes(original)
+            notes, _ = stn.validate_plan(plan, sources, vault=vault)
+
+            stage = vault / "stage"
+            staged = stn.write_notes(notes, sources, stage, vault=vault)[0]
+            staged_bytes = staged.read_bytes()
+            self.assertTrue(staged_bytes.startswith(original))
+            self.assertIn(
+                b"\r\n---\r\n\r\nFirst exact idea.\r\n\r\nhttps://example.com/a\r\n",
+                staged_bytes,
+            )
+            self.assertEqual(target.read_bytes(), original)
+
+            with self.assertRaisesRegex(ValueError, "--append-existing"):
+                stn.write_notes(notes, sources, vault, vault=vault)
+            stn.write_notes(
+                notes, sources, vault, vault=vault, append_existing=True)
+            written = target.read_bytes()
+            self.assertTrue(written.startswith(original))
+            self.assertEqual(written.count(b"https://example.com/a"), 1)
+
+            with self.assertRaisesRegex(ValueError, "already exists in root note"):
+                stn.validate_plan(plan, sources, vault=vault)
+
+    def test_existing_append_refuses_a_stale_target(self):
+        sources = stn.source_records([SOURCES[0]])
+        plan = {"notes": [{
+            "file": "Existing.md",
+            "existing": True,
+            "problem": "What exists?",
+            "same_problem": "The source answers the existing question directly.",
+            "source_ids": ["a"],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            target.write_text(
+                "What exists?\n***\nOriginal conjecture.\n", encoding="utf-8")
+            notes, _ = stn.validate_plan(plan, sources, vault=vault)
+            target.write_text(
+                "What exists?\n***\nRevised conjecture.\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "changed after validation"):
+                stn.write_notes(
+                    notes, sources, vault, vault=vault, append_existing=True)
 
 
 if __name__ == "__main__":

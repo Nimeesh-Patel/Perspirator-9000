@@ -2,8 +2,9 @@
 """Fetch and structurally deduplicate public X/Twitter status URLs.
 
 This tool establishes source facts only. It canonicalises status IDs, fetches
-public syndication data, preserves reply/quote/media context, and reports
-possible repeated text. It does not decide which posts share a problem or
+public syndication data, recovers complete Note Tweets and attached X Articles,
+preserves reply/quote/media context, and reports possible repeated text. It does
+not decide which posts share a problem or
 write Problem Notes.
 
 Examples:
@@ -33,6 +34,7 @@ URL_RE = re.compile(r"https?://\S+")
 LEADING_MENTIONS_RE = re.compile(r"^(?:@\w+\s+)+")
 SYNDICATION_ENDPOINT = "https://cdn.syndication.twimg.com/tweet-result"
 NOTE_TWEET_ENDPOINT = "https://api.fxtwitter.com/status/{status_id}"
+ARTICLE_RE = re.compile(r"https?://(?:www\.)?x\.com/i/article/(\d+)", re.IGNORECASE)
 
 
 def status_ids(text):
@@ -131,6 +133,47 @@ def fetch_note_text(status_id, timeout=20, retries=3, requester=request_json):
     return html.unescape(text).strip()
 
 
+def article_from_payload(status_id, article_id, payload):
+    """Return exact X Article title/body fields or refuse incomplete metadata."""
+    tweet = payload.get("tweet") if isinstance(payload, dict) else None
+    article = tweet.get("article") if isinstance(tweet, dict) else None
+    content = article.get("content") if isinstance(article, dict) else None
+    blocks = content.get("blocks") if isinstance(content, dict) else None
+    title = article.get("title") if isinstance(article, dict) else None
+    if (not isinstance(payload, dict) or payload.get("code") != 200
+            or not isinstance(tweet, dict) or tweet.get("id") != status_id
+            or not isinstance(article, dict) or article.get("id") != article_id
+            or not isinstance(title, str) or not title.strip()
+            or not isinstance(blocks, list)):
+        raise RuntimeError(
+            f"full X Article text unavailable or mismatched for {status_id}")
+    paragraphs = [
+        html.unescape(block["text"]).strip()
+        for block in blocks
+        if isinstance(block, dict)
+        and isinstance(block.get("text"), str)
+        and block["text"].strip()
+    ]
+    if not paragraphs:
+        raise RuntimeError(
+            f"full X Article text unavailable or mismatched for {status_id}")
+    return {
+        "id": article_id,
+        "title": html.unescape(title).strip(),
+        "url": f"https://x.com/i/article/{article_id}",
+        "text": "\n\n".join([html.unescape(title).strip(), *paragraphs]),
+    }
+
+
+def fetch_article(status_id, article_id, timeout=20, retries=3,
+                  requester=request_json):
+    """Recover an attached X Article through the same public status metadata."""
+    payload = requester(
+        NOTE_TWEET_ENDPOINT.format(status_id=status_id),
+        timeout=timeout, retries=retries)
+    return article_from_payload(status_id, article_id, payload)
+
+
 def expanded_text(post):
     text = html.unescape(post.get("text", ""))
     for entity in post.get("entities", {}).get("urls", []):
@@ -141,7 +184,8 @@ def expanded_text(post):
     return text
 
 
-def compact_post(post, note_fetcher=fetch_note_text):
+def compact_post(post, note_fetcher=fetch_note_text,
+                 article_fetcher=fetch_article):
     if not post:
         return None
     user = post.get("user") or {}
@@ -154,11 +198,22 @@ def compact_post(post, note_fetcher=fetch_note_text):
     )
     text = expanded_text(post)
     text_source = "syndication"
+    article = None
     if post.get("note_tweet"):
         if not status_id:
             raise ValueError("Note Tweet response has no status id")
         text = note_fetcher(status_id)
         text_source = "note_tweet_full"
+    else:
+        match = ARTICLE_RE.search(text)
+        if match:
+            if not status_id:
+                raise ValueError("X Article response has no status id")
+            article = article_fetcher(status_id, match.group(1))
+            post_text = text.strip()
+            text = (article["text"] if post_text == match.group(0)
+                    else f"{post_text}\n\n{article['text']}")
+            text_source = "x_article_full"
     return {
         "id": status_id,
         "url": canonical_url,
@@ -169,18 +224,23 @@ def compact_post(post, note_fetcher=fetch_note_text):
         "created_at": post.get("created_at"),
         "text": text,
         "text_source": text_source,
+        "article": article,
     }
 
 
-def compact_record(requested_id, post, note_fetcher=fetch_note_text):
-    primary = compact_post(post, note_fetcher=note_fetcher)
+def compact_record(requested_id, post, note_fetcher=fetch_note_text,
+                   article_fetcher=fetch_article):
+    primary = compact_post(
+        post, note_fetcher=note_fetcher, article_fetcher=article_fetcher)
     if not primary or primary["id"] != requested_id or not primary["text"]:
         raise ValueError("empty, mismatched, or unavailable post response")
     primary.update({
         "parent": compact_post(
-            post.get("parent"), note_fetcher=note_fetcher),
+            post.get("parent"), note_fetcher=note_fetcher,
+            article_fetcher=article_fetcher),
         "quoted": compact_post(
-            post.get("quoted_tweet"), note_fetcher=note_fetcher),
+            post.get("quoted_tweet"), note_fetcher=note_fetcher,
+            article_fetcher=article_fetcher),
         "media": [
             {
                 "type": item.get("type"),
@@ -208,14 +268,16 @@ def repeated_text_groups(records):
     return [ids for key, ids in groups.items() if key and len(ids) > 1]
 
 
-def build_result(input_ids, fetcher=fetch_json, note_fetcher=fetch_note_text):
+def build_result(input_ids, fetcher=fetch_json, note_fetcher=fetch_note_text,
+                 article_fetcher=fetch_article):
     unique_ids, duplicate_ids = unique_with_duplicates(input_ids)
     records = []
     errors = []
     for status_id in unique_ids:
         try:
             records.append(compact_record(
-                status_id, fetcher(status_id), note_fetcher=note_fetcher))
+                status_id, fetcher(status_id), note_fetcher=note_fetcher,
+                article_fetcher=article_fetcher))
         except Exception as exc:  # one unavailable post must not hide the rest
             errors.append({"id": status_id, "error": str(exc)})
     return {

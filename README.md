@@ -99,7 +99,7 @@ external source URLs → source adapter → {id, text, url} bundle
                                               │
                                               ▼
                                   source_to_notes.py
-                                  validated staged notes
+                                  staged new or patched existing notes
 ```
 
 `note_chunks.py` owns shared Markdown chunking; `problem_half.py` owns the
@@ -114,10 +114,14 @@ reads those policies in full. The tool does not rank policy relevance.
 
 Source adapters recover facts only. `x_posts.py` is one adapter, not the
 architecture. `source_to_notes.py` checks a plan's mechanical consequences—
-coverage, unique assignment, resolvable and YAML-safe `up:` links, ordinary Problem Note
-structure, exact source text and URLs, and no overwrite. The agent remains
-responsible for explaining the problems, grouping sources, choosing relations,
-and preserving conflicts.
+coverage, unique assignment, resolvable and YAML-safe `up:` links, ordinary
+Problem Note structure, and exact source text and URLs. New notes remain
+no-overwrite. An existing-note append requires `existing: true`, the exact
+current problem side, a `same_problem` explanation, staging for review, and an
+explicit `--append-existing` live-write flag. It preserves all existing bytes
+and rejects stale targets and duplicate root-note source URLs. The agent—not a
+neighbour score—remains responsible for explanatory identity, grouping,
+relations, and conflicts.
 
 ## Canonical Markdown
 
@@ -142,9 +146,10 @@ and preserving conflicts.
 - `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.
-- `x_posts.py` canonicalises and fetches public X/Twitter status sources.
-- `source_to_notes.py` validates an explanatory grouping plan and stages or
-  writes source-grounded Problem Notes without overwriting existing files.
+- `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
+  Note Tweets and attached X Articles when structurally present.
+- `source_to_notes.py` validates an explanatory grouping plan, creates new
+  Problem Notes, or applies explicit guarded append-only source blocks.
 
 Every CLI documents its detailed arguments and output with `--help`. The code
 is the canonical data-contract definition; duplicating every schema here made
@@ -185,13 +190,19 @@ python policy_index.py --vault "/vault" --json
 python x_posts.py --file "/scratch/x-links.txt" --out "/scratch/sources.json"
 python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
   --vault "/vault" --stage "/scratch/notes"
+
+# After auditing a stage that contains explicit existing:true operations.
+python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
+  --vault "/vault" --write --append-existing
 ```
 
 For source-to-Problem-Note work, query neighbours twice: first with source
 content to recover the existing problem situation, then with each drafted
 problem to find candidate parents, rivals, and conflicts. Read problem sides
-before conjectures. Group sources only when they contribute to the same
-explanatory problem. Conflict is a candidate problem, not untidiness to erase.
+before conjectures. A source belongs in an existing note only when it addresses
+almost exactly the same conflict under the same criterion; topic, vocabulary,
+parentage, and a high score are insufficient. Otherwise form a new problem and
+relate it. Conflict is a candidate problem, not untidiness to erase.
 
 ## Data lifetime and authority
 
@@ -214,6 +225,10 @@ marker—not text length or appearance—to invoke a status-ID-validated public
 long-text fallback. It records the chosen text route and refuses
 partial Note Tweet text when that recovery fails. Source fetching therefore
 needs network access; the other structural tools operate directly on files.
+An attached `/i/article/` URL invokes article metadata recovery that validates
+both the status ID and article ID and preserves the exact title and non-empty
+text blocks. The adapter refuses partial or mismatched long-form content.
+
 
 Tests are grouped by independently breakable contract rather than by module:
 
