@@ -209,8 +209,11 @@ explanatory problem. Conflict is a candidate problem, not untidiness to erase.
 
 Python 3 is sufficient for the structural and source tools. The neighbour
 subsystem additionally uses `numpy`, `torch`, and `transformers`. `x_posts.py`
-uses X's public syndication endpoint and therefore needs network access when
-fetching; the rest of the structural tools operate directly on local files.
+uses X's public syndication endpoint and the payload's structural Note Tweet
+marker—not text length or appearance—to invoke a status-ID-validated public
+long-text fallback. It records the chosen text route and refuses
+partial Note Tweet text when that recovery fails. Source fetching therefore
+needs network access; the other structural tools operate directly on files.
 
 Tests are grouped by independently breakable contract rather than by module:
 

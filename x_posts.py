@@ -32,6 +32,7 @@ STATUS_RE = re.compile(
 URL_RE = re.compile(r"https?://\S+")
 LEADING_MENTIONS_RE = re.compile(r"^(?:@\w+\s+)+")
 SYNDICATION_ENDPOINT = "https://cdn.syndication.twimg.com/tweet-result"
+NOTE_TWEET_ENDPOINT = "https://api.fxtwitter.com/status/{status_id}"
 
 
 def status_ids(text):
@@ -89,16 +90,9 @@ def syndication_token(status_id):
     return re.sub(r"(0+|\.)", "", base36)
 
 
-def fetch_json(status_id, timeout=20, retries=3):
-    params = urlencode({
-        "id": status_id,
-        "lang": "en",
-        "token": syndication_token(status_id),
-    })
-    request = Request(
-        f"{SYNDICATION_ENDPOINT}?{params}",
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
+def request_json(url, timeout=20, retries=3):
+    """Fetch JSON with one retry policy for every public X source endpoint."""
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
     last_error = None
     for attempt in range(1, retries + 1):
         try:
@@ -111,6 +105,32 @@ def fetch_json(status_id, timeout=20, retries=3):
     raise RuntimeError(str(last_error))
 
 
+def fetch_json(status_id, timeout=20, retries=3):
+    params = urlencode({
+        "id": status_id,
+        "lang": "en",
+        "token": syndication_token(status_id),
+    })
+    return request_json(
+        f"{SYNDICATION_ENDPOINT}?{params}", timeout=timeout, retries=retries)
+
+
+def fetch_note_text(status_id, timeout=20, retries=3, requester=request_json):
+    """Recover complete Note Tweet text or refuse a partial syndication field."""
+    payload = requester(
+        NOTE_TWEET_ENDPOINT.format(status_id=status_id),
+        timeout=timeout, retries=retries)
+    tweet = payload.get("tweet") if isinstance(payload, dict) else None
+    text = tweet.get("text") if isinstance(tweet, dict) else None
+    if (not isinstance(payload, dict) or payload.get("code") != 200
+            or not isinstance(tweet, dict) or tweet.get("id") != status_id
+            or tweet.get("is_note_tweet") is not True
+            or not isinstance(text, str) or not text.strip()):
+        raise RuntimeError(
+            f"full Note Tweet text unavailable or mismatched for {status_id}")
+    return html.unescape(text).strip()
+
+
 def expanded_text(post):
     text = html.unescape(post.get("text", ""))
     for entity in post.get("entities", {}).get("urls", []):
@@ -121,7 +141,7 @@ def expanded_text(post):
     return text
 
 
-def compact_post(post):
+def compact_post(post, note_fetcher=fetch_note_text):
     if not post:
         return None
     user = post.get("user") or {}
@@ -132,6 +152,13 @@ def compact_post(post):
         if screen_name and status_id
         else None
     )
+    text = expanded_text(post)
+    text_source = "syndication"
+    if post.get("note_tweet"):
+        if not status_id:
+            raise ValueError("Note Tweet response has no status id")
+        text = note_fetcher(status_id)
+        text_source = "note_tweet_full"
     return {
         "id": status_id,
         "url": canonical_url,
@@ -140,17 +167,20 @@ def compact_post(post):
             "screen_name": screen_name,
         },
         "created_at": post.get("created_at"),
-        "text": expanded_text(post),
+        "text": text,
+        "text_source": text_source,
     }
 
 
-def compact_record(requested_id, post):
-    primary = compact_post(post)
+def compact_record(requested_id, post, note_fetcher=fetch_note_text):
+    primary = compact_post(post, note_fetcher=note_fetcher)
     if not primary or primary["id"] != requested_id or not primary["text"]:
         raise ValueError("empty, mismatched, or unavailable post response")
     primary.update({
-        "parent": compact_post(post.get("parent")),
-        "quoted": compact_post(post.get("quoted_tweet")),
+        "parent": compact_post(
+            post.get("parent"), note_fetcher=note_fetcher),
+        "quoted": compact_post(
+            post.get("quoted_tweet"), note_fetcher=note_fetcher),
         "media": [
             {
                 "type": item.get("type"),
@@ -178,13 +208,14 @@ def repeated_text_groups(records):
     return [ids for key, ids in groups.items() if key and len(ids) > 1]
 
 
-def build_result(input_ids, fetcher=fetch_json):
+def build_result(input_ids, fetcher=fetch_json, note_fetcher=fetch_note_text):
     unique_ids, duplicate_ids = unique_with_duplicates(input_ids)
     records = []
     errors = []
     for status_id in unique_ids:
         try:
-            records.append(compact_record(status_id, fetcher(status_id)))
+            records.append(compact_record(
+                status_id, fetcher(status_id), note_fetcher=note_fetcher))
         except Exception as exc:  # one unavailable post must not hide the rest
             errors.append({"id": status_id, "error": str(exc)})
     return {

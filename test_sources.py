@@ -53,9 +53,36 @@ class SourceAdapterTests(unittest.TestCase):
         }]
         record = x_posts.compact_record("123", post)
         self.assertEqual(record["text"], "A & B https://example.com/a")
+        self.assertEqual(record["text_source"], "syndication")
         self.assertEqual(record["parent"]["id"], "122")
         self.assertEqual(record["quoted"]["id"], "121")
         self.assertEqual(record["media"][0]["alt_text"], "diagram")
+
+        note = x_fixture("124", "Truncated text")
+        note["note_tweet"] = {"id": "opaque"}
+        complete = "Complete long-form Note Tweet text."
+        record = x_posts.compact_record(
+            "124", note, note_fetcher=lambda status_id: complete)
+        self.assertEqual(record["text"], complete)
+        self.assertEqual(record["text_source"], "note_tweet_full")
+
+        payload = {
+            "code": 200,
+            "tweet": {
+                "id": "124",
+                "text": complete,
+                "is_note_tweet": True,
+            },
+        }
+        self.assertEqual(
+            x_posts.fetch_note_text(
+                "124", requester=lambda url, timeout, retries: payload),
+            complete,
+        )
+        payload["tweet"]["id"] = "mismatch"
+        with self.assertRaisesRegex(RuntimeError, "unavailable or mismatched"):
+            x_posts.fetch_note_text(
+                "124", requester=lambda url, timeout, retries: payload)
 
         posts = {
             "1": x_fixture("1", "@a Same claim https://t.co/a", "one"),
