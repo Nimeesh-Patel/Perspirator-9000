@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 import neighbour as nb  # noqa: E402
-from obsidian_cli import ObsidianCLI, exact_path  # noqa: E402
+from obsidian_cli import ObsidianCLI, exact_path, parsed  # noqa: E402
 import problem_candidates as pc  # noqa: E402
 
 FAILS = []
@@ -235,6 +235,9 @@ def main():
         check("ranking collapses multiple unit hits to best note hit",
               nb.collapse_by_note([0, 1, 2], meta, scores, 5) == [1, 2])
 
+        check("Obsidian no-result sentinels become empty collections",
+              parsed("No links found.") == []
+              and parsed("No backlinks found.") == [])
         calls = []
         def fake_runner(argv, **kwargs):
             calls.append((argv, kwargs))

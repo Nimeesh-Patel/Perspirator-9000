@@ -39,7 +39,11 @@ def parsed(stdout):
     try:
         return json.loads(value)
     except json.JSONDecodeError:
-        return [line.strip() for line in value.splitlines() if line.strip()]
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        if (len(lines) == 1 and lines[0].lower().startswith("no ")
+                and lines[0].lower().endswith(" found.")):
+            return []
+        return lines
 
 
 class ObsidianCLI:
