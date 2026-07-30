@@ -10,7 +10,9 @@ problem. Existing bytes are preserved; only exact source text and URL are
 appended.
 
 The source bundle may be a JSON list or an object whose `sources` or `records`
-field is a list. Every source needs `id`, `text`, and `url`.
+field is a list. Every source needs `id`, `text`, and a `locator` URI saying
+where it lives — `https://...` for a web source, `readera://...` for a book
+highlight. `url` remains accepted as the name of an http locator.
 
 Plan shape:
     {
@@ -52,6 +54,10 @@ from problem_half import split_note
 INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 EXCLUDED_PARTS = {".obsidian", ".trash", ".perspirator", "memory"}
 SEPARATOR = re.compile(r"^\*\*\*\s*$", re.MULTILINE)
+# A locator says where a source lives and is also the duplicate guard, so it
+# must be a stable, textually unique reference. `https` is one URI scheme among
+# several: a book highlight has no web address but does have `readera://...`.
+LOCATOR = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+$", re.IGNORECASE)
 
 
 def read_json(path):
@@ -72,19 +78,28 @@ def source_records(payload):
         raise ValueError("source bundle must be a list or contain sources/records")
 
     by_id = {}
+    seen_locators = {}
     for index, record in enumerate(records):
         if not isinstance(record, dict):
             raise ValueError(f"source {index} is not an object")
         source_id = str(record.get("id", "")).strip()
         text = record.get("text")
-        url = record.get("url")
+        locator = record.get("locator", record.get("url"))
         if not source_id or not isinstance(text, str) or not text.strip():
             raise ValueError(f"source {index} needs non-empty id and text")
-        if not isinstance(url, str) or not re.match(r"https?://", url):
-            raise ValueError(f"source {source_id} needs an http(s) url")
+        if not isinstance(locator, str) or not LOCATOR.match(locator.strip()):
+            raise ValueError(
+                f"source {source_id} needs a locator URI (scheme://reference)")
+        locator = locator.strip()
         if source_id in by_id:
             raise ValueError(f"duplicate source id in bundle: {source_id}")
-        by_id[source_id] = {"id": source_id, "text": text.strip(), "url": url}
+        if locator in seen_locators:
+            raise ValueError(
+                f"sources {seen_locators[locator]} and {source_id} share "
+                f"locator {locator}")
+        seen_locators[locator] = source_id
+        by_id[source_id] = {"id": source_id, "text": text.strip(),
+                            "locator": locator}
     return by_id
 
 
@@ -128,7 +143,7 @@ def read_existing(path):
 
 
 def existing_source_locations(vault, sources):
-    """Source id -> root note names already carrying its exact URL."""
+    """Source id -> root note names already carrying its exact locator."""
     locations = {source_id: [] for source_id in sources}
     for path in sorted(vault.glob("*.md")):
         try:
@@ -136,7 +151,7 @@ def existing_source_locations(vault, sources):
         except OSError:
             continue
         for source_id, source in sources.items():
-            if source["url"] in text:
+            if source["locator"] in text:
                 locations[source_id].append(path.name)
     return locations
 
@@ -264,7 +279,7 @@ def render_source_blocks(note, sources):
     blocks = []
     for source_id in note["source_ids"]:
         source = sources[source_id]
-        blocks.append(f"{source['text']}\n\n{source['url']}")
+        blocks.append(f"{source['text']}\n\n{source['locator']}")
     return "\n\n---\n\n".join(blocks)
 
 
