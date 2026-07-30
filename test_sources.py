@@ -566,3 +566,68 @@ class HighlightsToNotesTests(unittest.TestCase):
             actions, problems = hln.plan(hln.read_bundle(src), vault)
             self.assertEqual(actions, [])
             self.assertIn("matches several notes", problems[0])
+
+    def test_the_shorter_name_may_be_on_either_side(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"; vault.mkdir()
+            (vault / "The Enlightenment - The Pursuit of Happiness.md").write_text(
+                "---\ncollection: Books\n---\n\n[[Ritchie Robertson]]\n",
+                encoding="utf-8")
+            src = self.write_bundle(tmp, [
+                self.highlight("e1", "> A passage.", title="The Enlightenment",
+                               authors=("Ritchie Robertson",))])
+            actions, problems = hln.plan(hln.read_bundle(src), vault)
+            self.assertEqual(problems, [])
+            self.assertEqual(actions[0]["how"], "prefix")
+            self.assertEqual(actions[0]["note"],
+                             "The Enlightenment - The Pursuit of Happiness.md")
+
+    def test_the_author_decides_between_titles_that_alone_are_ambiguous(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"; vault.mkdir()
+            (vault / "The Enlightenment - The Pursuit of Happiness.md").write_text(
+                "---\ncollection: Books\n---\n\n[[Ritchie Robertson]]\n",
+                encoding="utf-8")
+            (vault / "The Enlightenment - A Very Short Introduction.md").write_text(
+                '---\ncollection: Books\nauthors:\n- "[[John Robertson]]"\n---\n',
+                encoding="utf-8")
+            src = self.write_bundle(tmp, [
+                self.highlight("e2", "> A passage.", title="The Enlightenment",
+                               authors=("Ritchie Robertson",))])
+            actions, problems = hln.plan(hln.read_bundle(src), vault)
+            self.assertEqual(problems, [])
+            self.assertEqual(actions[0]["how"], "author")
+            self.assertEqual(actions[0]["note"],
+                             "The Enlightenment - The Pursuit of Happiness.md")
+
+            # With no author to separate them the clash is refused, not guessed.
+            src = self.write_bundle(tmp, [
+                self.highlight("e3", "> A passage.", title="The Enlightenment",
+                               authors=())])
+            actions, problems = hln.plan(hln.read_bundle(src), vault)
+            self.assertEqual(actions, [])
+            self.assertIn("matches several notes", problems[0])
+
+    def test_a_passage_already_typed_out_by_hand_is_not_imported_again(self):
+        passage = ("The Enlightenment declared the conviction that the goal of "
+                   "life was happiness, and that if this goal could be attained "
+                   "at all, it was to be found in the here and now.")
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"; vault.mkdir()
+            note = vault / "A Book.md"
+            # Reflowed by hand, and carrying no anchor.
+            note.write_text("---\ncollection: Books\n---\n\n> " +
+                            passage.replace(", ", ",\n") + "\n", encoding="utf-8")
+            record = self.highlight("t1", "> " + passage)
+            record["quote"] = passage
+            src = self.write_bundle(tmp, [record])
+            actions, _ = hln.plan(hln.read_bundle(src), vault)
+            self.assertEqual(actions[0]["new"], [])
+            self.assertEqual(len(actions[0]["transcribed"]), 1)
+
+            # A short passage is not evidence of transcription.
+            short = self.highlight("t2", "> Yes.")
+            short["quote"] = "Yes."
+            src = self.write_bundle(tmp, [short])
+            actions, _ = hln.plan(hln.read_bundle(src), vault)
+            self.assertEqual(len(actions[0]["new"]), 1)
