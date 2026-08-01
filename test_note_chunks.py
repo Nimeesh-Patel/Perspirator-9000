@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Contract tests for structural parsing and retrieval-unit formation."""
 
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -73,6 +75,7 @@ def words(text):
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        build(root, ".perspirator/transactions/run/before/ignored.md", PROBLEM_NOTE)
         p_problem = build(root, "asking dumb questions.md", PROBLEM_NOTE)
         p_multi = build(root, "memory/perspirator/runs/review.md", MULTILINE_LIST)
         p_fence = build(root, "fenced.md", FENCED)
@@ -179,6 +182,13 @@ zeta eta theta iota kappa.
         check("no separator uses side none", all(unit["side"] == "none" for unit in fenced))
 
         every = nc.all_chunks(root)
+        indexed = json.loads(subprocess.run(
+            [sys.executable, str(Path(__file__).parent / "problem_index.py"), str(root)],
+            capture_output=True, text=True, check=True).stdout)
+        check("problem index excludes rollback snapshots",
+              not any(item["path"].startswith(".perspirator/") for item in indexed)
+              and any(item["path"] == "asking dumb questions.md" for item in indexed),
+              str([item["path"] for item in indexed]))
         check("excluded folders are skipped",
               not any(unit["note"].startswith((".trash", "Attachments")) for unit in every))
         check("corpus filter", all(unit["corpus"] == "memory"

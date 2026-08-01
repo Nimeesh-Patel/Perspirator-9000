@@ -515,7 +515,8 @@ def cmd_match(args):
     elif args.stdin:
         queries.append({"text": sys.stdin.read(), "note": None, "file": None})
     else:
-        queries.append({"text": args.text, "note": None, "file": None})
+        for value in args.text:
+            queries.append({"text": value, "note": None, "file": None})
     empty = next((query for query in queries
                   if not (query["text"] or "").strip()), None)
     if empty:
@@ -548,7 +549,8 @@ def cmd_match(args):
         if len(matches) > 1:
             if offset:
                 print()
-            print(f"===== {queries[offset]['file']} =====")
+            label = queries[offset]["file"] or f"text query {offset + 1}"
+            print(f"===== {label} =====")
         print_match(result, header)
     return 0
 
@@ -669,7 +671,8 @@ def main():
     p_match.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
     p_match.add_argument("--index")
     group = p_match.add_mutually_exclusive_group(required=True)
-    group.add_argument("--text")
+    group.add_argument("--text", action="append", metavar="TEXT",
+                       help="query text; repeat to reuse one index/model session")
     group.add_argument("--file", action="append", metavar="PATH",
                        help="query a note; repeat to reuse one index/model session")
     group.add_argument("--stdin", action="store_true")

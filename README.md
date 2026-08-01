@@ -119,8 +119,9 @@ arguments, and exposes links, backlinks, properties, search, contextual search,
 Bases queries, orphans, dead ends, and unresolved links. `neighbour.py` uses the
 path-local evidence and reports filesystem fallback per note when configured, so
 one transient lookup failure does not discard successful Obsidian contexts.
-Neither provider changes vector scores. Repeated `match --file` arguments share
-one loaded index, embedding model, link map, and Obsidian context cache.
+Neither provider changes vector scores. Repeated `match --file` or `match
+--text` arguments share one loaded index, embedding model, link map, and
+Obsidian context cache.
 
 The neighbour index is reused by direct matching and recurrence candidate
 retrieval. Embedding and lexical scores nominate notes to inspect; they do not
@@ -213,9 +214,11 @@ python problem_index.py "/vault" --out "/scratch/problems.json"
 # Query or investigate possible recurrence.
 python neighbour.py match --vault "/vault" --text "a problem formulation" \
   --corpus all --side all --unit all --graph configured --k 10
-# Query several notes without repeatedly loading the model and index.
+# Query several notes or source passages without repeatedly loading the model and index.
 python neighbour.py match --vault "/vault" --file "/vault/a.md" \
   --file "/vault/b.md" --graph configured --json
+python neighbour.py match --vault "/vault" --text "source passage one" \
+  --text "source passage two" --graph configured --json
 python obsidian_cli.py --vault "/vault" context "path/to/note.md"
 python problem_candidates.py --vault "/vault" --json
 

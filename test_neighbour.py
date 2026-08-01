@@ -399,6 +399,22 @@ def main():
               and [item["query_note"] for item in payload["queries"]]
               == ["a.md", "c.md"], str(payload))
 
+        text_batch = BatchEmbedder()
+        text_args = SimpleNamespace(
+            vault=str(root), index=None, no_refresh=True,
+            file=None, stdin=False, text=["problem a?", "problem c?"],
+            corpus="all", side="all", unit="all", folder=None,
+            k=1, graph="none", json=True)
+        output = io.StringIO()
+        with patch.object(nb, "load_index", return_value=batch_loaded), \
+                patch.object(nb, "Embedder", return_value=text_batch), \
+                redirect_stdout(output):
+            nb.cmd_match(text_args)
+        payload = json.loads(output.getvalue())
+        check("repeated texts share one embedding batch and result envelope",
+              text_batch.batches == [["problem a?", "problem c?"]]
+              and len(payload["queries"]) == 2, str(payload))
+
         cfg_path = root / "memory" / "perspirator" / "Neighbour Retrieval.md"
         cfg_path.write_text(CONFIG.replace("stub/model", "other/model"), encoding="utf-8")
         try:
