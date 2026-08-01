@@ -76,9 +76,25 @@ class ObsidianCLI:
                 "data": parsed(stdout), "error": None}
 
     def probe(self):
-        """Bare ``obsidian`` is the handshake with the running application."""
+        """Ask the running application which vault it has open.
+
+        The answer is state only a running Obsidian holds, so it separates
+        "the app is closed" from "that subcommand failed" — the confusion this
+        probe exists to prevent. It also proves the CLI is answering about the
+        intended vault rather than another open one. Bare ``obsidian`` proves
+        neither and costs a several-hundred-line help banner.
+        """
         if self._probe is None:
-            self._probe = self._run([self.executable])
+            result = self._run([self.executable, "vault", "info=name"])
+            data = result.get("data") or []
+            opened = data[0].strip() if isinstance(data, list) and data else ""
+            result["vault_open"] = opened
+            if result["ok"] and opened != self.vault_name:
+                result.update({
+                    "ok": False, "status": "wrong-vault",
+                    "error": f"CLI answers about {opened!r}, "
+                             f"not {self.vault_name!r}"})
+            self._probe = result
         return self._probe
 
     def command(self, name, **options):

@@ -265,8 +265,8 @@ def main():
         calls = []
         def fake_runner(argv, **kwargs):
             calls.append((argv, kwargs))
-            if len(argv) == 1:
-                return Completed("Obsidian CLI")
+            if argv[1:] == ["vault", "info=name"]:
+                return Completed(root.name)
             command = argv[2]
             if command == "backlinks":
                 return Completed('[{"file":"source.md"}]')
@@ -284,9 +284,18 @@ def main():
               context["backlinks"] == ["source.md"]
               and context["links"] == ["target one.md"]
               and context["properties"] == {"type": "Problem"}, str(context))
-        command_calls = [(argv, kwargs) for argv, kwargs in calls if len(argv) > 2]
-        check("CLI probes bare obsidian before path commands",
-              calls[0][0] == ["obsidian"], str(calls[0]))
+        command_calls = [(argv, kwargs) for argv, kwargs in calls
+                         if argv[1:2] != ["vault"]]
+        check("CLI probes the open vault name before path commands",
+              calls[0][0] == ["obsidian", "vault", "info=name"], str(calls[0]))
+
+        def other_vault_runner(argv, **kwargs):
+            if argv[1:] == ["vault", "info=name"]:
+                return Completed("a different vault")
+            return Completed("")
+        wrong = ObsidianCLI(root, runner=other_vault_runner).note_context("n.md")
+        check("CLI refuses context when another vault is open",
+              wrong["status"] == "wrong-vault", str(wrong))
         check("CLI targets exact path and never invokes a shell",
               all("path=folder/note.md" in argv for argv, _ in command_calls[:3])
               and all(kwargs["shell"] is False for _, kwargs in command_calls[:3]),
@@ -298,8 +307,8 @@ def main():
 
         flaky_backlinks = [True]
         def flaky_runner(argv, **kwargs):
-            if len(argv) == 1:
-                return Completed("Obsidian CLI")
+            if argv[1:] == ["vault", "info=name"]:
+                return Completed(root.name)
             command = argv[2]
             if command == "backlinks" and flaky_backlinks and flaky_backlinks.pop(0):
                 return Completed(stderr="temporary failure", returncode=1)
