@@ -49,6 +49,9 @@ def parse_frontmatter(fm):
     if not fm:
         return category, up
     lines = fm.split("\n")
+    # YAML permits sequence items at the same indentation as their key. The
+    # structural parser treats that spelling like the indented equivalent.
+    lines = [('  ' + line if line.startswith('- ') else line) for line in lines]
     i = 0
     while i < len(lines):
         stripped = lines[i].strip()

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import note_chunks as nc
 import source_to_notes as stn
 import highlights_to_notes as hln
 import readera_highlights
@@ -178,6 +179,9 @@ class SourceToNotesTests(unittest.TestCase):
             notes, unassigned = stn.validate_plan(plan, sources, vault=vault)
             text = stn.render_note(notes[0], sources)
         self.assertEqual(unassigned, [])
+        frontmatter = text.split('---', 2)[1].strip()
+        self.assertEqual(nc.parse_frontmatter(frontmatter)[1],
+                         ['Known parent\'s criticism'])
         self.assertIn("up:\n- \"[[Known parent's criticism]]\"\ncategory: \"Default\"", text)
         self.assertIn("How can both claims stand?\n\n***\n\n", text)
         self.assertIn("First exact idea.\n\nhttps://example.com/a", text)

@@ -202,6 +202,10 @@ zeta eta theta iota kappa.
               category == "Morality" and up == ["epistemology"])
         check("frontmatter_fields reads top-level keys",
               nc.frontmatter_fields(PROBLEM_NOTE).get("category") == "Morality")
+        category, up = nc.parse_frontmatter(
+            'up:\n- [[first parent]]\n- [[second parent]]\ncategory: Default')
+        check('frontmatter accepts unindented YAML up lists',
+              category == 'Default' and up == ['first parent', 'second parent'])
         refs, existing, _ = nc.vault_links(root)
         check("vault_links finds referrers",
               p_problem in refs.get("precautionary principle", set()))
