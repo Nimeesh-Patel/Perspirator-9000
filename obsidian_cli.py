@@ -56,6 +56,7 @@ class ObsidianCLI:
         self.limit = max(1, int(limit))
         self.runner = runner
         self._probe = None
+        self._context_cache = {}
 
     def _run(self, argv):
         try:
@@ -97,6 +98,8 @@ class ObsidianCLI:
     def note_context(self, path):
         """Links, backlinks, and properties for an exact note path."""
         rel = exact_path(path)
+        if rel in self._context_cache:
+            return self._context_cache[rel]
         probe = self.probe()
         if not probe["ok"]:
             return {"provider": "obsidian", "status": probe["status"],
@@ -115,12 +118,14 @@ class ObsidianCLI:
             backlinks = [item.get("file", item) if isinstance(item, dict) else item
                          for item in backlinks]
         links = calls["links"]["data"]
-        return {
+        result = {
             "provider": "obsidian", "status": "ok", "path": rel,
             "backlinks": list(backlinks)[:self.limit],
             "links": list(links)[:self.limit],
             "properties": calls["properties"]["data"],
         }
+        self._context_cache[rel] = result
+        return result
 
     def search(self, query, path=None, context=False):
         options = {"query": query, "limit": self.limit, "format": "json"}

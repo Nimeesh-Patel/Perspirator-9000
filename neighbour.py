@@ -371,7 +371,7 @@ def filesystem_context(vault, note, refs, limit):
     }
 
 
-def expand_graph(vault, results, config, mode, refs):
+def expand_graph(vault, results, config, mode, refs, cli=None):
     """Expand selected note paths after ranking; never alter vector scores."""
     if mode == "none":
         return {"provider": "none", "status": "disabled", "notes": []}
@@ -382,18 +382,35 @@ def expand_graph(vault, results, config, mode, refs):
         return {"provider": "filesystem", "status": "ok",
                 "notes": [filesystem_context(vault, note, refs, limit) for note in notes]}
 
-    cli = ObsidianCLI(vault, timeout=config["graph"]["timeout"], limit=limit)
+    cli = cli or ObsidianCLI(
+        vault, timeout=config["graph"]["timeout"], limit=limit)
     contexts = [cli.note_context(note) for note in notes]
-    failure = next((context for context in contexts if context["status"] != "ok"), None)
-    if not failure:
+    failures = [context for context in contexts if context["status"] != "ok"]
+    if not failures:
         return {"provider": "obsidian", "status": "ok", "notes": contexts,
                 "capabilities": ["links", "backlinks", "properties", "search",
                                  "search:context", "base:query", "orphans",
                                  "deadends", "unresolved"]}
     if config["graph"]["fallback"] == "filesystem":
-        return {"provider": "filesystem", "status": "fallback",
-                "issue": failure.get("error"),
-                "notes": [filesystem_context(vault, note, refs, limit) for note in notes]}
+        expanded = []
+        for note, context in zip(notes, contexts):
+            if context["status"] == "ok":
+                expanded.append(context)
+                continue
+            fallback = filesystem_context(vault, note, refs, limit)
+            fallback["status"] = "fallback"
+            fallback["issue"] = context.get("error")
+            expanded.append(fallback)
+        some_obsidian = len(failures) < len(contexts)
+        return {
+            "provider": "mixed" if some_obsidian else "filesystem",
+            "status": "partial-fallback" if some_obsidian else "fallback",
+            "issues": [{"path": item.get("path"),
+                        "status": item.get("status"),
+                        "error": item.get("error")} for item in failures],
+            "notes": expanded,
+        }
+    failure = failures[0]
     return {"provider": "obsidian", "status": failure["status"],
             "issue": failure.get("error"), "notes": contexts}
 
@@ -412,36 +429,11 @@ def cmd_index(args):
     return 0
 
 
-def cmd_match(args):
-    loaded = load_index(args.vault, index=args.index,
-                        refresh_index=not args.no_refresh)
-    vault, config = loaded["vault"], loaded["config"]
-    stale = loaded["stale"]
-    if stale and (stale["notes_changed"] or stale["notes_removed"]):
-        print(f"refreshed: {stale['notes_changed']} notes changed, "
-              f"{stale['notes_removed']} removed, {stale['embedded']} units "
-              f"re-embedded ({stale['seconds']}s)", file=sys.stderr)
-    header, meta, vectors = loaded["header"], loaded["meta"], loaded["vectors"]
-
-    source_note = None
-    if args.file:
-        source = Path(args.file).expanduser()
-        text = read_note(source)
-        if text is None:
-            raise SystemExit(f"STOP: cannot read {source}")
-        try:
-            source_note = source.resolve().relative_to(vault).as_posix()
-        except ValueError:
-            source_note = None
-    elif args.stdin:
-        text = sys.stdin.read()
-    else:
-        text = args.text
-    if not (text or "").strip():
-        raise SystemExit("STOP: empty query text")
-
-    query = Embedder(config["model"], config["formation"]["max-tokens"])([text])[0]
-    scores = vectors @ query
+def match_query(vault, config, meta, vectors, query, query_vector,
+                args, refs, cli=None):
+    """Rank and expand one validated query using shared loaded resources."""
+    source_note = query["note"]
+    scores = vectors @ query_vector
     eligible = []
     for index, unit in enumerate(meta):
         if args.corpus not in (None, "all") and unit["corpus"] != args.corpus:
@@ -457,11 +449,9 @@ def cmd_match(args):
         eligible.append(index)
     kept = collapse_by_note(eligible, meta, scores, args.k)
 
-    refs, _, _ = vault_links(vault, excludes=config["exempt"] or None)
     src_stem = Path(source_note).stem if source_note else None
     src_referrers = {p.stem for p in refs.get(src_stem, set())} if src_stem else set()
     src_links = note_link_stems(vault, source_note) if source_note else set()
-
     results = []
     for rank, index in enumerate(kept, 1):
         unit = meta[index]
@@ -477,25 +467,89 @@ def cmd_match(args):
             "shares_referrers": sorted(src_referrers & dest_referrers)[:5],
             "snippet": " ".join(unit["text"].split())[:220],
         })
-    graph = expand_graph(vault, results, config, args.graph, refs)
+    graph = expand_graph(vault, results, config, args.graph, refs, cli=cli)
+    return {"query_note": source_note, "results": results, "graph": graph}
 
-    if args.json:
-        print(json.dumps({"query_note": source_note, "header": public_header(header),
-                          "results": results, "graph": graph},
-                         ensure_ascii=False, indent=1))
-        return 0
+
+def print_match(result, header):
+    """Render one match result while keeping JSON and text assembly separate."""
+    graph, results = result["graph"], result["results"]
     print(f"{len(results)} neighbours  (index {header['chunks']} units, "
           f"model {header['model']}; graph {graph['provider']}/{graph['status']})")
-    for result in results:
-        where = " > ".join(result["heading"]) or "(no heading)"
-        print(f"\n[{result['rank']:>2}] {result['score']:.2f}  "
-              f"{result['note']} :: {where}")
-        print(f"     {result['corpus']}/{result['side']}/{result['unit']} "
-              f"[{result['strategy']}]"
-              + ("  already-links" if result["already_links"] else "")
-              + (f"  shares-referrers: {', '.join(result['shares_referrers'])}"
-                 if result["shares_referrers"] else ""))
-        print(f"     {result['snippet'][:170]}")
+    for item in results:
+        where = " > ".join(item["heading"]) or "(no heading)"
+        print(f"\n[{item['rank']:>2}] {item['score']:.2f}  "
+              f"{item['note']} :: {where}")
+        print(f"     {item['corpus']}/{item['side']}/{item['unit']} "
+              f"[{item['strategy']}]"
+              + ("  already-links" if item["already_links"] else "")
+              + (f"  shares-referrers: {', '.join(item['shares_referrers'])}"
+                 if item["shares_referrers"] else ""))
+        print(f"     {item['snippet'][:170]}")
+
+
+def cmd_match(args):
+    loaded = load_index(args.vault, index=args.index,
+                        refresh_index=not args.no_refresh)
+    vault, config = loaded["vault"], loaded["config"]
+    stale = loaded["stale"]
+    if stale and (stale["notes_changed"] or stale["notes_removed"]):
+        print(f"refreshed: {stale['notes_changed']} notes changed, "
+              f"{stale['notes_removed']} removed, {stale['embedded']} units "
+              f"re-embedded ({stale['seconds']}s)", file=sys.stderr)
+    header, meta, vectors = loaded["header"], loaded["meta"], loaded["vectors"]
+
+    queries = []
+    if args.file:
+        for value in args.file:
+            source = Path(value).expanduser()
+            text = read_note(source)
+            if text is None:
+                raise SystemExit(f"STOP: cannot read {source}")
+            try:
+                source_note = source.resolve().relative_to(vault).as_posix()
+            except ValueError:
+                source_note = None
+            queries.append({"text": text, "note": source_note,
+                            "file": str(source)})
+    elif args.stdin:
+        queries.append({"text": sys.stdin.read(), "note": None, "file": None})
+    else:
+        queries.append({"text": args.text, "note": None, "file": None})
+    empty = next((query for query in queries
+                  if not (query["text"] or "").strip()), None)
+    if empty:
+        suffix = f" in {empty['file']}" if empty["file"] else ""
+        raise SystemExit(f"STOP: empty query text{suffix}")
+
+    embedder = Embedder(config["model"], config["formation"]["max-tokens"])
+    query_vectors = embedder([query["text"] for query in queries])
+    refs, _, _ = vault_links(vault, excludes=config["exempt"] or None)
+    selected = (config["graph"]["provider"]
+                if args.graph == "configured" else args.graph)
+    cli = (ObsidianCLI(vault, timeout=config["graph"]["timeout"],
+                       limit=config["graph"]["limit"])
+           if selected == "obsidian" else None)
+    matches = [match_query(vault, config, meta, vectors, query, vector,
+                           args, refs, cli=cli)
+               for query, vector in zip(queries, query_vectors)]
+
+    if args.json:
+        if len(matches) == 1:
+            payload = {"query_note": matches[0]["query_note"],
+                       "header": public_header(header),
+                       "results": matches[0]["results"],
+                       "graph": matches[0]["graph"]}
+        else:
+            payload = {"header": public_header(header), "queries": matches}
+        print(json.dumps(payload, ensure_ascii=False, indent=1))
+        return 0
+    for offset, result in enumerate(matches):
+        if len(matches) > 1:
+            if offset:
+                print()
+            print(f"===== {queries[offset]['file']} =====")
+        print_match(result, header)
     return 0
 
 
@@ -595,6 +649,14 @@ def cmd_pairs(args):
 
 
 def main():
+    # Vault text is Unicode; do not let a legacy Windows console code page
+    # turn a completed retrieval into an output-time failure.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except (OSError, ValueError):
+                pass
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_index = sub.add_parser("index", help="embed retrieval units into a disposable index")
@@ -608,7 +670,8 @@ def main():
     p_match.add_argument("--index")
     group = p_match.add_mutually_exclusive_group(required=True)
     group.add_argument("--text")
-    group.add_argument("--file")
+    group.add_argument("--file", action="append", metavar="PATH",
+                       help="query a note; repeat to reuse one index/model session")
     group.add_argument("--stdin", action="store_true")
     p_match.add_argument("--corpus", choices=("memory", "vault", "all"))
     p_match.add_argument("--side", choices=("problem", "answer", "none", "all"))

@@ -2,10 +2,13 @@
 """Contract tests for incremental neighbour indexing and CLI context."""
 
 import hashlib
+import io
 import json
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -288,6 +291,30 @@ def main():
               all("path=folder/note.md" in argv for argv, _ in command_calls[:3])
               and all(kwargs["shell"] is False for _, kwargs in command_calls[:3]),
               str(command_calls[:3]))
+        cached_call_count = len(calls)
+        check("CLI context cache avoids repeated subprocesses",
+              cli.note_context("folder/note.md") == context
+              and len(calls) == cached_call_count)
+
+        flaky_backlinks = [True]
+        def flaky_runner(argv, **kwargs):
+            if len(argv) == 1:
+                return Completed("Obsidian CLI")
+            command = argv[2]
+            if command == "backlinks" and flaky_backlinks and flaky_backlinks.pop(0):
+                return Completed(stderr="temporary failure", returncode=1)
+            if command == "backlinks":
+                return Completed("[]")
+            if command == "properties":
+                return Completed("{}")
+            return Completed("")
+
+        flaky = ObsidianCLI(root, runner=flaky_runner)
+        first_context = flaky.note_context("retry.md")
+        second_context = flaky.note_context("retry.md")
+        check("failed path context stays retryable within the session",
+              first_context["status"] == "error"
+              and second_context["status"] == "ok", str(second_context))
         searched = cli.search("knowledge growth", path="memory")
         check("generic CLI adapter exposes bounded search",
               searched["data"] == ["a.md"]
@@ -297,6 +324,80 @@ def main():
             check("exact paths reject traversal", False, "no ValueError")
         except ValueError:
             check("exact paths reject traversal", True)
+
+        class ContextCLI:
+            def __init__(self, failing):
+                self.failing = set(failing)
+
+            def note_context(self, note):
+                if note in self.failing:
+                    return {"provider": "obsidian", "status": "unavailable",
+                            "path": note, "error": "timed out"}
+                return {"provider": "obsidian", "status": "ok", "path": note,
+                        "backlinks": [], "links": [], "properties": {}}
+
+        graph_results = [{"note": "a.md"}, {"note": "c.md"}]
+        mixed = nb.expand_graph(root, graph_results, config, "obsidian", {},
+                                cli=ContextCLI({"c.md"}))
+        check("one graph failure falls back only for that note",
+              mixed["provider"] == "mixed"
+              and mixed["status"] == "partial-fallback"
+              and [item["provider"] for item in mixed["notes"]]
+              == ["obsidian", "filesystem"]
+              and mixed["notes"][1]["status"] == "fallback", str(mixed))
+        all_failed = nb.expand_graph(root, graph_results, config, "obsidian", {},
+                                    cli=ContextCLI({"a.md", "c.md"}))
+        check("total graph failure remains explicit",
+              all_failed["provider"] == "filesystem"
+              and all_failed["status"] == "fallback"
+              and len(all_failed["issues"]) == 2, str(all_failed))
+        no_fallback = dict(config)
+        no_fallback["graph"] = dict(config["graph"], fallback="none")
+        refused = nb.expand_graph(root, graph_results, no_fallback, "obsidian", {},
+                                  cli=ContextCLI({"c.md"}))
+        check("disabled graph fallback preserves the Obsidian error",
+              refused["provider"] == "obsidian"
+              and refused["status"] == "unavailable", str(refused))
+
+        class BatchEmbedder:
+            def __init__(self):
+                self.batches = []
+
+            def __call__(self, texts):
+                self.batches.append(list(texts))
+                return np.array([[1.0, 0.0], [0.0, 1.0]], dtype="float32")
+
+        batch = BatchEmbedder()
+        batch_loaded = {
+            "vault": root, "config": config, "stale": None,
+            "header": {"model": "stub/model", "chunks": 2, "units": 2,
+                       "dim": 2, "built": "now", "shape": config["shape"]},
+            "meta": [
+                {"note": "a.md", "stem": "a", "heading": [], "side": "problem",
+                 "unit": "problem_identity", "strategy": "whole",
+                 "corpus": "vault", "text": "problem a?"},
+                {"note": "c.md", "stem": "c", "heading": [], "side": "problem",
+                 "unit": "problem_identity", "strategy": "whole",
+                 "corpus": "vault", "text": "problem c?"},
+            ],
+            "vectors": np.array([[1.0, 0.0], [0.0, 1.0]], dtype="float32"),
+        }
+        batch_args = SimpleNamespace(
+            vault=str(root), index=None, no_refresh=True,
+            file=[str(a), str(root / "c.md")], stdin=False, text=None,
+            corpus="all", side="all", unit="all", folder=None,
+            k=1, graph="none", json=True)
+        output = io.StringIO()
+        with patch.object(nb, "load_index", return_value=batch_loaded), \
+                patch.object(nb, "Embedder", return_value=batch), \
+                redirect_stdout(output):
+            nb.cmd_match(batch_args)
+        payload = json.loads(output.getvalue())
+        check("repeated files share one embedding batch and result envelope",
+              len(batch.batches) == 1 and len(batch.batches[0]) == 2
+              and len(payload["queries"]) == 2
+              and [item["query_note"] for item in payload["queries"]]
+              == ["a.md", "c.md"], str(payload))
 
         cfg_path = root / "memory" / "perspirator" / "Neighbour Retrieval.md"
         cfg_path.write_text(CONFIG.replace("stub/model", "other/model"), encoding="utf-8")
