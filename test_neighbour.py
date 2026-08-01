@@ -238,6 +238,27 @@ def main():
         check("Obsidian no-result sentinels become empty collections",
               parsed("No links found.") == []
               and parsed("No backlinks found.") == [])
+        pair_meta = [
+            {'note': 'a.md'}, {'note': 'a.md'},
+            {'note': 'b.md'}, {'note': 'c.md'},
+        ]
+        linked = write(
+            root, 'linked.md',
+            'problem?\n***\nThe link is on this side: [[b]].\n')
+        check('complete-note link evidence crosses retrieval-unit boundaries',
+              nb.note_link_stems(root, 'linked.md') == {'b'})
+        linked.unlink()
+        pair_vectors = np.array([
+            [1.0, 0.0], [0.8, 0.2], [0.95, 0.05], [0.0, 1.0],
+        ], dtype='float32')
+        pairs = nb.top_note_pairs([0, 1, 2, 3], pair_meta, pair_vectors, 3)
+        check('pair ranking collapses units to the best note pair',
+              len(pairs) == 3
+              and (pair_meta[pairs[0][1]]['note'],
+                   pair_meta[pairs[0][2]]['note']) == ('a.md', 'b.md')
+              and round(pairs[0][0], 2) == 0.95,
+              str(pairs))
+
         calls = []
         def fake_runner(argv, **kwargs):
             calls.append((argv, kwargs))

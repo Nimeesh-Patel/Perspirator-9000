@@ -95,6 +95,7 @@ neighbour.py index: embed common RetrievalUnit records
         |
         v
 neighbour.py match: rank units --> collapse best unit per note
+neighbour.py pairs: rank mutually near filtered units --> collapse note pairs
         |
         v
 obsidian_cli.py: bounded links/backlinks/properties after retrieval
@@ -167,8 +168,9 @@ relations, and conflicts.
 - `note_chunks.py` forms inspectable retrieval units using the configured
   structural strategy.
 - `problem_index.py` creates a disposable map of root-vault Problem Notes.
-- `neighbour.py` indexes units, ranks them, collapses by note, and expands
-  configured context.
+- `neighbour.py` indexes units, ranks query neighbours or bounded filtered
+  note pairs, collapses by note identity, and expands configured context for
+  direct matches.
 - `obsidian_cli.py` provides bounded read-only Obsidian search, graph,
   properties, Bases, and vault-shape context.
 - `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
@@ -211,6 +213,10 @@ python neighbour.py match --vault "/vault" --text "a problem formulation" \
   --corpus all --side all --unit all --graph configured --k 10
 python obsidian_cli.py --vault "/vault" context "path/to/note.md"
 python problem_candidates.py --vault "/vault" --json
+
+# Nominate mutually near root problem identities for explanatory inspection.
+python neighbour.py pairs --vault '/vault' --corpus vault --side problem \
+  --unit problem_identity --k 50
 
 # Expose the structurally valid active-policy surface.
 python policy_index.py --vault "/vault" --json

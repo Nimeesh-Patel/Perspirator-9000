@@ -332,6 +332,32 @@ def collapse_by_note(indices, meta, scores, limit):
     return out
 
 
+def top_note_pairs(indices, meta, vectors, limit):
+    '''Rank filtered unit pairs, retaining only the best unit pair per note pair.'''
+    best = {}
+    for offset, left in enumerate(indices):
+        right_indices = indices[offset + 1:]
+        if not right_indices:
+            continue
+        scores = vectors[right_indices] @ vectors[left]
+        for right, score in zip(right_indices, scores):
+            left_note, right_note = meta[left]['note'], meta[right]['note']
+            if left_note == right_note:
+                continue
+            key = tuple(sorted((left_note, right_note)))
+            previous = best.get(key)
+            if previous is None or float(score) > previous[0]:
+                best[key] = (float(score), left, right)
+    ranked = sorted(best.values(), key=lambda item: -item[0])
+    return ranked[:limit]
+
+
+def note_link_stems(vault, note):
+    '''Return link targets from the complete note, not only one retrieval unit.'''
+    text = read_note(Path(vault) / note) or ''
+    return {target.split('/')[-1] for target in extract_links(text)}
+
+
 def filesystem_context(vault, note, refs, limit):
     path = vault / note
     text = read_note(path) or ""
@@ -434,9 +460,7 @@ def cmd_match(args):
     refs, _, _ = vault_links(vault, excludes=config["exempt"] or None)
     src_stem = Path(source_note).stem if source_note else None
     src_referrers = {p.stem for p in refs.get(src_stem, set())} if src_stem else set()
-    src_links = ({target.split("/")[-1]
-                  for target in extract_links(read_note(vault / source_note) or "")}
-                 if source_note else set())
+    src_links = note_link_stems(vault, source_note) if source_note else set()
 
     results = []
     for rank, index in enumerate(kept, 1):
@@ -447,8 +471,9 @@ def cmd_match(args):
             "note": unit["note"], "heading": unit["heading"],
             "side": unit["side"], "unit": unit["unit"],
             "strategy": unit["strategy"], "corpus": unit["corpus"],
-            "already_links": bool(src_stem) and (unit["stem"] in src_links or
-                                                  src_stem in set(unit["links"])),
+            "already_links": bool(src_stem) and (
+                unit["stem"] in src_links
+                or src_stem in note_link_stems(vault, unit["note"])),
             "shares_referrers": sorted(src_referrers & dest_referrers)[:5],
             "snippet": " ".join(unit["text"].split())[:220],
         })
@@ -471,6 +496,101 @@ def cmd_match(args):
               + (f"  shares-referrers: {', '.join(result['shares_referrers'])}"
                  if result["shares_referrers"] else ""))
         print(f"     {result['snippet'][:170]}")
+    return 0
+
+
+def cmd_pairs(args):
+    '''Nominate mutually near notes without making a same-problem judgment.'''
+    loaded = load_index(args.vault, index=args.index,
+                        refresh_index=not args.no_refresh)
+    stale = loaded['stale']
+    if stale and (stale['notes_changed'] or stale['notes_removed']):
+        print('refreshed: {} notes changed, {} removed, {} units '
+              're-embedded ({}s)'.format(
+                  stale['notes_changed'], stale['notes_removed'],
+                  stale['embedded'], stale['seconds']), file=sys.stderr)
+    vault = loaded['vault']
+    meta, vectors = loaded['meta'], loaded['vectors']
+    eligible = []
+    for index, unit in enumerate(meta):
+        if args.corpus != 'all' and unit['corpus'] != args.corpus:
+            continue
+        if args.side != 'all' and unit['side'] != args.side:
+            continue
+        if args.unit != 'all' and unit['unit'] != args.unit:
+            continue
+        if args.folder and not unit['note'].startswith(args.folder):
+            continue
+        eligible.append(index)
+    if args.k < 1:
+        raise SystemExit('STOP: pairs --k must be at least 1')
+    if len(eligible) > args.max_units:
+        raise SystemExit(
+            'STOP: pairs selected {} units, above --max-units {}. '
+            'Narrow corpus/side/unit/folder or raise the explicit bound.'.format(
+                len(eligible), args.max_units))
+
+    refs, _, _ = vault_links(vault, excludes=loaded['config']['exempt'] or None)
+    results = []
+    ranked = top_note_pairs(eligible, meta, vectors, args.k)
+    for rank, (score, left_index, right_index) in enumerate(ranked, 1):
+        left, right = meta[left_index], meta[right_index]
+        left_refs = {path.stem for path in refs.get(left['stem'], set())}
+        right_refs = {path.stem for path in refs.get(right['stem'], set())}
+        left_links = note_link_stems(vault, left['note'])
+        right_links = note_link_stems(vault, right['note'])
+        results.append({
+            'rank': rank,
+            'score': round(score, 3),
+            'left': {
+                'note': left['note'], 'heading': left['heading'],
+                'side': left['side'], 'unit': left['unit'],
+                'strategy': left['strategy'],
+                'snippet': ' '.join(left['text'].split())[:220],
+            },
+            'right': {
+                'note': right['note'], 'heading': right['heading'],
+                'side': right['side'], 'unit': right['unit'],
+                'strategy': right['strategy'],
+                'snippet': ' '.join(right['text'].split())[:220],
+            },
+            'already_links': (right['stem'] in left_links
+                              or left['stem'] in right_links),
+            'shares_referrers': sorted(left_refs & right_refs)[:5],
+            'left_backlinks': len(refs.get(left['stem'], set())),
+            'right_backlinks': len(refs.get(right['stem'], set())),
+        })
+
+    payload = {
+        'header': public_header(loaded['header']),
+        'selection': {
+            'corpus': args.corpus, 'side': args.side, 'unit': args.unit,
+            'folder': args.folder, 'eligible_units': len(eligible),
+            'max_units': args.max_units,
+        },
+        'relation_evidence': {'provider': 'filesystem', 'status': 'ok'},
+        'results': results,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=1))
+        return 0
+    print('{} candidate pairs from {} units '
+          '(corpus {}, side {}, unit {})'.format(
+              len(results), len(eligible), args.corpus, args.side, args.unit))
+    for result in results:
+        suffix = ''
+        if result['already_links']:
+            suffix += '  already-links'
+        if result['shares_referrers']:
+            suffix += '  shares-referrers: {}'.format(
+                ', '.join(result['shares_referrers']))
+        suffix += '  backlinks: {}/{}'.format(
+            result['left_backlinks'], result['right_backlinks'])
+        print('\n[{:>2}] {:.3f}  {}  <->  {}{}'.format(
+            result['rank'], result['score'], result['left']['note'],
+            result['right']['note'], suffix))
+        print('     L: {}'.format(result['left']['snippet'][:150]))
+        print('     R: {}'.format(result['right']['snippet'][:150]))
     return 0
 
 
@@ -500,6 +620,23 @@ def main():
     p_match.add_argument("--no-refresh", action="store_true")
     p_match.add_argument("--json", action="store_true")
     p_match.set_defaults(func=cmd_match)
+    p_pairs = sub.add_parser(
+        'pairs', help='rank filtered note pairs; make no identity judgment')
+    p_pairs.add_argument('--vault', default=str(Path.home() / 'nimeesh vault'))
+    p_pairs.add_argument('--index')
+    p_pairs.add_argument('--corpus', choices=('memory', 'vault', 'all'),
+                         default='vault')
+    p_pairs.add_argument('--side', choices=('problem', 'answer', 'none', 'all'),
+                         default='problem')
+    p_pairs.add_argument(
+        '--unit', choices=('problem_identity', 'conjecture', 'block', 'all'),
+        default='problem_identity')
+    p_pairs.add_argument('--folder')
+    p_pairs.add_argument('--k', type=int, default=50)
+    p_pairs.add_argument('--max-units', type=int, default=1000)
+    p_pairs.add_argument('--no-refresh', action='store_true')
+    p_pairs.add_argument('--json', action='store_true')
+    p_pairs.set_defaults(func=cmd_pairs)
     args = parser.parse_args()
     return args.func(args)
 
