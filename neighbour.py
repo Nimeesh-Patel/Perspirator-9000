@@ -468,7 +468,27 @@ def match_query(vault, config, meta, vectors, query, query_vector,
             "snippet": " ".join(unit["text"].split())[:220],
         })
     graph = expand_graph(vault, results, config, args.graph, refs, cli=cli)
-    return {"query_note": source_note, "results": results, "graph": graph}
+    return {"query_note": source_note, "results": results, "graph": graph,
+            "distribution": score_distribution(scores, eligible)}
+
+
+def score_distribution(scores, eligible):
+    """Where the shown results sit in the pool that was actually searched.
+
+    Everything is a little near everything, so a score means nothing on its
+    own. Reporting the pool's own baseline lets a top result that barely
+    clears it be told apart from one that stands clearly above it. This is
+    provenance, not a verdict: whether a near unit is *relevant* stays an
+    agent judgment made from the current problem situation.
+    """
+    if not len(eligible):
+        return {"eligible": 0, "top": None, "p99": None, "median": None}
+    import numpy as np
+    pool = scores[eligible]
+    return {"eligible": int(len(eligible)),
+            "top": round(float(pool.max()), 2),
+            "p99": round(float(np.percentile(pool, 99)), 2),
+            "median": round(float(np.median(pool)), 2)}
 
 
 def print_match(result, header):
@@ -476,6 +496,11 @@ def print_match(result, header):
     graph, results = result["graph"], result["results"]
     print(f"{len(results)} neighbours  (index {header['chunks']} units, "
           f"model {header['model']}; graph {graph['provider']}/{graph['status']})")
+    spread = result.get("distribution")
+    if spread and spread["eligible"]:
+        print(f"scores: top {spread['top']:.2f}, 99th {spread['p99']:.2f}, "
+              f"median {spread['median']:.2f} over {spread['eligible']} "
+              f"eligible units")
     for item in results:
         where = " > ".join(item["heading"]) or "(no heading)"
         print(f"\n[{item['rank']:>2}] {item['score']:.2f}  "
