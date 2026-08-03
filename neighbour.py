@@ -528,6 +528,8 @@ def cmd_match(args):
     if args.file:
         for value in args.file:
             source = Path(value).expanduser()
+            if not source.is_absolute():
+                source = vault / source
             text = read_note(source)
             if text is None:
                 raise SystemExit(f"STOP: cannot read {source}")

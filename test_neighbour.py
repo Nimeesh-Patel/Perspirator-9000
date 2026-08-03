@@ -408,6 +408,23 @@ def main():
               and [item["query_note"] for item in payload["queries"]]
               == ["a.md", "c.md"], str(payload))
 
+        relative_batch = BatchEmbedder()
+        relative_args = SimpleNamespace(
+            vault=str(root), index=None, no_refresh=True,
+            file=['a.md'], stdin=False, text=None,
+            corpus='all', side='all', unit='all', folder=None,
+            k=1, graph='none', json=True)
+        output = io.StringIO()
+        with patch.object(nb, 'load_index', return_value=batch_loaded), \
+                patch.object(nb, 'Embedder', return_value=relative_batch), \
+                redirect_stdout(output):
+            nb.cmd_match(relative_args)
+        payload = json.loads(output.getvalue())
+        check('relative query file resolves against the supplied vault',
+              bool(relative_batch.batches)
+              and payload['query_note'] == 'a.md',
+              str(payload))
+
         text_batch = BatchEmbedder()
         text_args = SimpleNamespace(
             vault=str(root), index=None, no_refresh=True,
