@@ -104,6 +104,12 @@ obsidian_cli.py: bounded links/backlinks/properties after retrieval
 agent reads candidate notes and judges identity, relation, conflict, placement
 ```
 
+anki_sync.py is the external-consumer boundary for Problem Notes. It renders
+the canonical problem and conjecture halves, updates an existing numeric
+anki_note_id in place, and reports the identity of a newly created card for
+the caller to patch back into frontmatter. It never edits the vault itself, so
+an Obsidian change and its Anki synchronization remain separately inspectable.
+
 Formation is specialised because authored structures explain different units;
 processing is shared because every unit has the same provenance, embedding,
 filtering, ranking, note-collapse, and context-expansion contract. Generic token
@@ -261,8 +267,10 @@ relate it. Conflict is a candidate problem, not untidiness to erase.
 
 ## Dependencies and verification
 
-Python 3 is sufficient for the structural and source tools. The neighbour
-subsystem additionally uses `numpy`, `torch`, and `transformers`. Obsidian CLI
+Python 3 is sufficient for most structural and source tools. `anki_sync.py`
+additionally uses `markdown-it-py` to render canonical Markdown into Anki
+fields. The neighbour subsystem additionally uses `numpy`, `torch`, and
+`transformers`. Obsidian CLI
 is optional for application-indexed context; bare `obsidian` is its availability
 probe, and configured filesystem fallback keeps vector retrieval usable without
 it. `x_posts.py` uses X's public syndication endpoint and the payload's
@@ -282,6 +290,7 @@ Tests are grouped by independently breakable contract rather than by module:
 python test_note_chunks.py   # Markdown structure and Problem Note boundaries
 python test_neighbour.py     # index lifecycle, retrieval, recurrence consumers
 python test_sources.py       # source adapters and source-to-note invariants
+python test_anki_sync.py     # identity-preserving Anki rendering and updates
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need

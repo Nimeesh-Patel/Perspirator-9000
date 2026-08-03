@@ -6,6 +6,7 @@ import io
 import json
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -165,7 +166,8 @@ def main():
         base = first["units"]
         check("initial build embeds every retrieval unit",
               first["embedded"] == base and base > 0, str(first))
-        metadata = json.loads(str(np.load(out)["meta"]))
+        with np.load(out, allow_pickle=False) as data:
+            metadata = json.loads(str(data["meta"]))
         problem_units = [item for item in metadata if item["note"] == "a.md"]
         check("Problem Note index stores identity plus contextual conjecture",
               [item["unit"] for item in problem_units]
@@ -177,6 +179,21 @@ def main():
         loaded = nb.load_index(root, index=out, refresh_index=False)
         check("shared loader aligns metadata and vectors",
               len(loaded["meta"]) == len(loaded["vectors"]) == base)
+        race = root / ".perspirator" / "race.npz"
+        archives = [
+            {"vectors": np.array([[1.0, 0.0]], dtype="float32"),
+             "ids": json.dumps([f"id-{number}"]),
+             "meta": json.dumps([{"note": f"{number}.md"}]),
+             "header": json.dumps({"writer": number})}
+            for number in (1, 2)
+        ]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda values: nb._atomic_savez(race, **values), archives))
+        with np.load(race, allow_pickle=False) as race_data:
+            race_writer = json.loads(str(race_data["header"]))["writer"]
+            race_vectors = len(race_data["vectors"])
+        check("concurrent refresh writes leave one complete readable index",
+              race_writer in (1, 2) and race_vectors == 1)
         check("lexical overlap stays independent",
               nb.lexical_overlap(
                   "recurring cultural criticism preserves rational correction",
@@ -461,7 +478,8 @@ def main():
         cfg_path.write_text(scoped_text, encoding="utf-8")
         scoped_config = nb.load_config(root)
         nb.refresh(root, scoped_config, out, rebuild=True, embedder=StubEmbedder())
-        scoped = json.loads(str(np.load(out)["meta"]))
+        with np.load(out, allow_pickle=False) as data:
+            scoped = json.loads(str(data["meta"]))
         check("rebuild after shape change re-scopes index",
               scoped and all(item["corpus"] == "memory" for item in scoped))
 

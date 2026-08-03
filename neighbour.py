@@ -9,8 +9,10 @@ selected by the active vault configuration, while this file owns the mechanism.
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -222,6 +224,24 @@ def formation_args(config, embedder):
     }
 
 
+def _atomic_savez(path, **arrays):
+    """Replace one NumPy archive atomically, including under concurrent refresh."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                dir=path.parent, prefix=path.name + ".", suffix=".tmp.npz",
+                delete=False) as handle:
+            temporary = Path(handle.name)
+        import numpy as np
+        np.savez(temporary, **arrays)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
 def refresh(vault, config, out, rebuild=False, embedder=None):
     """Incrementally level the disposable index with the vault."""
     import numpy as np
@@ -229,21 +249,21 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
     stamps = note_stamps(vault, config)
     known_vectors, old_meta, old_stamps = {}, [], {}
     if out.is_file() and not rebuild:
-        old = np.load(out, allow_pickle=False)
-        header = json.loads(str(old["header"]))
-        if header.get("model") != config["model"]:
-            raise SystemExit(
-                f"STOP: {out} was built with {header.get('model')!r}, config says "
-                f"{config['model']!r}. Vectors from different models are not "
-                "comparable; re-run `index --rebuild`.")
-        if header.get("shape") != config["shape"]:
-            raise SystemExit(
-                f"STOP: {out} was built for a different retrieval-unit shape; "
-                "re-run `index --rebuild`.")
-        old_meta = json.loads(str(old["meta"]))
-        old_stamps = header.get("notes", {})
-        for cid, vector in zip(json.loads(str(old["ids"])), old["vectors"]):
-            known_vectors[cid] = vector
+        with np.load(out, allow_pickle=False) as old:
+            header = json.loads(str(old["header"]))
+            if header.get("model") != config["model"]:
+                raise SystemExit(
+                    f"STOP: {out} was built with {header.get('model')!r}, config says "
+                    f"{config['model']!r}. Vectors from different models are not "
+                    "comparable; re-run `index --rebuild`.")
+            if header.get("shape") != config["shape"]:
+                raise SystemExit(
+                    f"STOP: {out} was built for a different retrieval-unit shape; "
+                    "re-run `index --rebuild`.")
+            old_meta = json.loads(str(old["meta"]))
+            old_stamps = header.get("notes", {})
+            for cid, vector in zip(json.loads(str(old["ids"])), old["vectors"]):
+                known_vectors[cid] = vector.copy()
 
     changed = {rel for rel, stamp in stamps.items() if old_stamps.get(rel) != stamp}
     removed = set(old_stamps) - set(stamps)
@@ -272,15 +292,15 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
     fields = ("note", "stem", "heading", "start", "end", "side", "unit",
               "strategy", "corpus", "links", "text", "embedding_text")
     meta = [{key: chunk[key] for key in fields} for chunk in chunks]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(out, vectors=matrix.astype("float32"), ids=json.dumps(ids),
-             meta=json.dumps(meta, ensure_ascii=False),
-             header=json.dumps({
-                 "model": config["model"], "shape": config["shape"],
-                 "dim": int(matrix.shape[1]) if len(matrix) else 0,
-                 "chunks": len(ids), "units": len(ids), "notes": stamps,
-                 "built": time.strftime("%Y-%m-%d %H:%M"),
-             }))
+    _atomic_savez(
+        out, vectors=matrix.astype("float32"), ids=json.dumps(ids),
+        meta=json.dumps(meta, ensure_ascii=False),
+        header=json.dumps({
+            "model": config["model"], "shape": config["shape"],
+            "dim": int(matrix.shape[1]) if len(matrix) else 0,
+            "chunks": len(ids), "units": len(ids), "notes": stamps,
+            "built": time.strftime("%Y-%m-%d %H:%M"),
+        }))
     return {"chunks": len(ids), "units": len(ids), "embedded": len(missing),
             "reused": len(ids) - len(missing), "notes_changed": len(changed),
             "notes_removed": len(removed), "seconds": round(elapsed, 1), "path": out}
@@ -294,16 +314,17 @@ def load_index(vault, index=None, refresh_index=True):
     if not index.is_file():
         raise SystemExit(f"STOP: no index at {index}. Run `neighbour.py index` first.")
     stale = refresh(vault, config, index) if refresh_index else None
-    data = np.load(index, allow_pickle=False)
-    header = json.loads(str(data["header"]))
+    with np.load(index, allow_pickle=False) as data:
+        header = json.loads(str(data["header"]))
+        meta = json.loads(str(data["meta"]))
+        vectors = data["vectors"].copy()
     if header.get("model") != config["model"]:
         raise SystemExit(f"STOP: index model {header.get('model')!r} != config "
                          f"{config['model']!r}; rebuild the index.")
     if header.get("shape") != config["shape"]:
         raise SystemExit("STOP: index retrieval-unit shape differs from config; rebuild it.")
     return {"vault": vault, "config": config, "index": index, "stale": stale,
-            "header": header, "meta": json.loads(str(data["meta"])),
-            "vectors": data["vectors"]}
+            "header": header, "meta": meta, "vectors": vectors}
 
 
 def public_header(header):
