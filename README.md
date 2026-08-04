@@ -131,6 +131,11 @@ Neither provider changes vector scores. Repeated `match --file` or `match
 --text` arguments share one loaded index, embedding model, link map, and
 Obsidian context cache.
 
+Note renames are identity transactions owned by the running Obsidian
+application: use direct `obsidian rename path="old.md" name="new"` after exact
+path and backlink checks. A raw filesystem rename moves bytes but does not
+propagate wikilink targets, so it is not an equivalent operation.
+
 The neighbour index is reused by direct matching and recurrence candidate
 retrieval. Embedding and lexical scores nominate notes to inspect; they do not
 establish identity, relevance, placement, criticism, redundancy, or truth.
