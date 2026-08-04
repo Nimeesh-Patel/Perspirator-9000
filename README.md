@@ -131,11 +131,6 @@ Neither provider changes vector scores. Repeated `match --file` or `match
 --text` arguments share one loaded index, embedding model, link map, and
 Obsidian context cache.
 
-Note renames are identity transactions owned by the running Obsidian
-application: use direct `obsidian rename path="old.md" name="new"` after exact
-path and backlink checks. A raw filesystem rename moves bytes but does not
-propagate wikilink targets, so it is not an equivalent operation.
-
 The neighbour index is reused by direct matching and recurrence candidate
 retrieval. Embedding and lexical scores nominate notes to inspect; they do not
 establish identity, relevance, placement, criticism, redundancy, or truth.
@@ -189,6 +184,7 @@ relations, and conflicts.
   direct matches.
 - `obsidian_cli.py` provides bounded read-only Obsidian search, graph,
   properties, Bases, and vault-shape context.
+- `note_rename.py` owns the guarded Obsidian note-identity transaction.
 - `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.
@@ -234,6 +230,10 @@ python neighbour.py match --vault "/vault" --text "source passage one" \
   --text "source passage two" --graph configured --json
 python obsidian_cli.py --vault "/vault" context "path/to/note.md"
 python problem_candidates.py --vault "/vault" --json
+
+# Inspect first; --apply invokes the guarded rename once.
+python note_rename.py "old title.md" "new title" --vault "/vault"
+python note_rename.py "old title.md" "new title" --vault "/vault" --apply
 
 # Nominate mutually near root problem identities for explanatory inspection.
 python neighbour.py pairs --vault '/vault' --corpus vault --side problem \
@@ -298,6 +298,7 @@ python test_note_chunks.py   # Markdown structure and Problem Note boundaries
 python test_neighbour.py     # index lifecycle, retrieval, recurrence consumers
 python test_sources.py       # source adapters and source-to-note invariants
 python test_anki_sync.py     # identity-preserving Anki rendering and updates
+python test_note_rename.py   # guarded Obsidian rename identity transaction
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need

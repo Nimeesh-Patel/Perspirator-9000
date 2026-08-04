@@ -62,7 +62,8 @@ class ObsidianCLI:
         try:
             completed = self.runner(
                 argv, cwd=str(self.vault), capture_output=True, text=True,
-                timeout=self.timeout, shell=False)
+                encoding="utf-8", errors="replace", timeout=self.timeout,
+                shell=False)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
             return {"ok": False, "status": "unavailable", "argv": argv,
                     "data": [], "error": f"{type(exc).__name__}: {exc}"}
