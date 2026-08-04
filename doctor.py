@@ -127,11 +127,24 @@ def validate_memory_freshness(vault):
         print(f"         ... and {len(orphans) - 8} more")
 
 
+NOT_SHIPPED = {"install.py"}
+
+
 def validate_shared_scripts(source_dir):
     print("\nShared structural toolkit")
     for name in SCRIPT_NAMES:
         check(f"source script exists: {name}", (source_dir / name).is_file(),
               str(source_dir / name))
+
+    # The manifest is hand-maintained, so the invariant it exists to protect —
+    # the shipped toolkit is the repository toolkit — has to be checked against
+    # the directory rather than against itself. Otherwise a new script is
+    # simply never installed and every listed check still passes.
+    present = {path.name for path in source_dir.glob("*.py")
+               if not path.name.startswith("test_")} - NOT_SHIPPED
+    unlisted = sorted(present - set(SCRIPT_NAMES))
+    check("every source script is listed for install", not unlisted,
+          "unlisted, so never installed: " + ", ".join(unlisted) if unlisted else "")
 
 
 def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
