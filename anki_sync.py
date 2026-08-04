@@ -20,7 +20,7 @@ try:
 except ImportError:
     MarkdownIt = None
 
-from note_chunks import frontmatter_fields
+from note_chunks import DEFAULT_EXCLUDES, frontmatter_fields
 from problem_half import parse_note
 
 WIKILINK = re.compile(r"(!?)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
@@ -34,26 +34,81 @@ def obsidian_uri(vault_name, target):
         {"vault": vault_name, "file": target})
 
 
-def expand_wikilinks(markdown, vault_name):
+def expand_wikilinks(markdown, vault_name, link_targets=None):
     def replace(match):
         _embedded, target, label = match.groups()
         target = target.strip()
         label = (label or target.split("#", 1)[0]).strip()
+        if link_targets:
+            base, marker, anchor = target.partition("#")
+            canonical = link_targets.get(base.replace(chr(92), "/").casefold())
+            if canonical:
+                target = canonical + (marker + anchor if marker else "")
         return f"[{label}]({obsidian_uri(vault_name, target)})"
     return WIKILINK.sub(replace, markdown)
 
 
-def render_markdown(markdown, vault_name):
+def render_markdown(markdown, vault_name, link_targets=None):
     if MarkdownIt is None:
         raise RuntimeError(
             "anki_sync.py requires markdown-it-py (pip install markdown-it-py)")
-    expanded = expand_wikilinks(markdown, vault_name)
+    expanded = expand_wikilinks(markdown, vault_name, link_targets)
     expanded = BARE_URL.sub(r"<\1>", expanded)
     return MarkdownIt("commonmark").render(expanded)
 
 
 def frontmatter(text):
     return frontmatter_fields(text)
+
+
+def frontmatter_aliases(text):
+    '''Read scalar or list-style Obsidian aliases without a YAML dependency.'''
+    raw = parse_note(text)['frontmatter']
+    if not raw:
+        return []
+    aliases, collecting = [], False
+    for line in raw.splitlines():
+        stripped = line.strip()
+        top_level = bool(line) and not line[:1].isspace() and not stripped.startswith('- ')
+        if top_level:
+            key, marker, value = line.partition(':')
+            collecting = bool(marker) and key.strip() in ('alias', 'aliases')
+            if collecting and value.strip():
+                value = value.strip()
+                values = (value[1:-1].split(',')
+                          if value.startswith('[') and value.endswith(']')
+                          else [value])
+                aliases.extend(item.strip().strip(chr(39) + chr(34))
+                               for item in values)
+        elif collecting and stripped.startswith('- '):
+            aliases.append(stripped[2:].strip().strip(chr(39) + chr(34)))
+    return list(dict.fromkeys(alias for alias in aliases if alias))
+
+
+def canonical_link_targets(vault):
+    '''Map unambiguous filenames and aliases to canonical vault-relative paths.'''
+    vault = Path(vault).resolve()
+    names, aliases = {}, {}
+    for path in vault.rglob('*.md'):
+        relative = path.relative_to(vault)
+        if any(part in DEFAULT_EXCLUDES for part in relative.parts):
+            continue
+        canonical = relative.with_suffix('').as_posix()
+        for key in (canonical, path.stem):
+            names.setdefault(key.casefold(), set()).add(canonical)
+        try:
+            text = path.read_text(encoding='utf-8-sig', errors='replace')
+        except OSError:
+            continue
+        for alias in frontmatter_aliases(text):
+            key = alias.replace(chr(92), '/').removesuffix('.md').casefold()
+            aliases.setdefault(key, set()).add(canonical)
+    resolved = {key: next(iter(values))
+                for key, values in names.items() if len(values) == 1}
+    for key, values in aliases.items():
+        if key not in names and len(values) == 1:
+            resolved[key] = next(iter(values))
+    return resolved
 
 
 def numeric_note_id(value):
@@ -77,7 +132,7 @@ def deck_candidate(fields):
     return "Default"
 
 
-def note_payload(path, vault, vault_name=None):
+def note_payload(path, vault, vault_name=None, link_targets=None):
     path, vault = Path(path).resolve(), Path(vault).resolve()
     try:
         relative = path.relative_to(vault)
@@ -91,6 +146,8 @@ def note_payload(path, vault, vault_name=None):
         raise ValueError(f"not a non-empty Problem Note: {relative.as_posix()}")
     fields = frontmatter(text)
     vault_name = vault_name or vault.name
+    if link_targets is None:
+        link_targets = canonical_link_targets(vault)
     target = relative.with_suffix("").as_posix()
     header = LINK_HEADER.format(
         uri=obsidian_uri(vault_name, target), label=relative.stem)
@@ -100,8 +157,10 @@ def note_payload(path, vault, vault_name=None):
         "deck_candidate": deck_candidate(fields),
         "model": "Basic",
         "fields": {
-            "Front": header + render_markdown(parsed["problem"], vault_name),
-            "Back": render_markdown(parsed["conjecture"] or "", vault_name),
+            "Front": header + render_markdown(
+                parsed["problem"], vault_name, link_targets),
+            "Back": render_markdown(
+                parsed["conjecture"] or "", vault_name, link_targets),
         },
     }
 
@@ -167,7 +226,9 @@ def main(argv=None):
     args = arguments(argv)
     vault = Path(args.vault).expanduser().resolve()
     try:
-        payloads = [note_payload(vault / item, vault, args.vault_name)
+        link_targets = canonical_link_targets(vault)
+        payloads = [note_payload(
+                        vault / item, vault, args.vault_name, link_targets)
                     for item in args.file]
         invoke = lambda action, params=None: http_invoke(
             args.endpoint, action, params)

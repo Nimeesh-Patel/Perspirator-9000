@@ -109,6 +109,8 @@ the canonical problem and conjecture halves, updates an existing numeric
 anki_note_id in place, and reports the identity of a newly created card for
 the caller to patch back into frontmatter. It never edits the vault itself, so
 an Obsidian change and its Anki synchronization remain separately inspectable.
+Wikilink display text remains authored text, while unambiguous vault aliases
+are resolved to canonical file paths before Obsidian URIs are exported.
 
 Formation is specialised because authored structures explain different units;
 processing is shared because every unit has the same provenance, embedding,

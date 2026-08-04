@@ -45,6 +45,21 @@ class AnkiSyncTests(unittest.TestCase):
             self.assertIn("knowledge creation", payload["fields"]["Front"])
             self.assertIn("file=problems", payload["fields"]["Back"])
 
+    def test_payload_resolves_an_alias_to_its_canonical_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp)
+            (vault / 'Canonical target.md').write_text(
+                '---\naliases:\n  - old target\n---\nTarget.\n',
+                encoding='utf-8')
+            source = vault / 'Source.md'
+            source.write_text(
+                'How?\n***\nSee [[old target|preserved wording]].\n',
+                encoding='utf-8')
+            payload = anki_sync.note_payload(source, vault)
+            self.assertIn('file=Canonical+target', payload['fields']['Back'])
+            self.assertNotIn('file=old+target', payload['fields']['Back'])
+            self.assertIn('preserved wording', payload['fields']['Back'])
+
     def test_existing_identity_is_updated_in_place(self):
         fake = FakeAnki(notes=[17])
         actions = anki_sync.synchronize([self.payload(17)], fake, apply=True)
