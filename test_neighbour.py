@@ -236,6 +236,49 @@ def main():
         check("a zero-lexical unit is never nominated by the lexical ranker",
               all("lexical" not in matched[i] for i in order if lexical[i] == 0))
 
+        import numpy as _np
+        def unit(note, kind, heading=()):
+            return {"note": note, "unit": kind, "heading": list(heading)}
+        moved = _np.array([1.0, 0.0], "float32")
+        same = _np.array([0.0, 1.0], "float32")
+        near = _np.array([0.06, 0.998], "float32")
+        old_units = [unit("a.md", "conjecture"), unit("b.md", "conjecture"),
+                     unit("c.md", "block")]
+        new_units = [unit("a.md", "conjecture"), unit("b.md", "conjecture"),
+                     unit("c.md", "block")]
+        old_ids, new_ids = ["o1", "o2", "o3"], ["n1", "n2", "n3"]
+        vectors = {"o1": same, "o2": same, "o3": same,
+                   "n1": moved, "n2": same, "n3": moved}
+        drift_log = root / "drift.jsonl"
+        written = nb.record_drift(drift_log, old_units, old_ids, vectors,
+                                  new_units, new_ids, vectors)
+        events = [json.loads(line) for line in
+                  drift_log.read_text(encoding="utf-8").splitlines()]
+        check("a rewritten unit is logged with how far it moved",
+              written == 1 and events[0]["note"] == "a.md"
+              and events[0]["similarity"] == 0.0, str(events))
+        check("an unchanged unit is not logged",
+              all(e["note"] != "b.md" for e in events))
+        check("blocks are not tracked, because they reorder",
+              all(e["note"] != "c.md" for e in events))
+
+        vectors["n1"] = near
+        drift_log.unlink()
+        nb.record_drift(drift_log, old_units, old_ids, vectors, new_units,
+                        new_ids, vectors)
+        events = [json.loads(line) for line in
+                  drift_log.read_text(encoding="utf-8").splitlines()]
+        check("a near-identical rewording is still recorded, not thresholded away",
+              len(events) == 1 and 0.9 < events[0]["similarity"] < 1.0,
+              str(events))
+
+        check("drift identity survives a rewrite that changes chunk_id",
+              nb.drift_key(unit("a.md", "conjecture", ("H1",)))
+              == nb.drift_key(unit("a.md", "conjecture", ("H1",))))
+        check("drift identity separates the two sides of one note",
+              nb.drift_key(unit("a.md", "conjecture"))
+              != nb.drift_key(unit("a.md", "problem_identity")))
+
         left = ("How can a criticism-preserving institution remain corrigible "
                 "when its leaders become attached to authority?")
         right = ("What lets an organisation replace entrenched governors while "
