@@ -224,8 +224,22 @@ def formation_args(config, embedder):
     }
 
 
+REPLACE_ATTEMPTS = 12
+REPLACE_BACKOFF = 0.02
+
+
 def _atomic_savez(path, **arrays):
-    """Replace one NumPy archive atomically, including under concurrent refresh."""
+    """Replace one NumPy archive atomically, including under concurrent refresh.
+
+    `os.replace` is atomic on POSIX, but on Windows it raises PermissionError
+    while any other handle holds the destination — which a concurrent refresh
+    routinely does. This is the platform the toolkit actually runs on, and the
+    condition is transient, so retry briefly rather than let a rename accident
+    surface as a lost index write and a crashed run.
+
+    Each attempt is still a single atomic rename; retrying does not weaken the
+    guarantee, it is what makes the guarantee hold here.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
@@ -236,7 +250,14 @@ def _atomic_savez(path, **arrays):
             temporary = Path(handle.name)
         import numpy as np
         np.savez(temporary, **arrays)
-        os.replace(temporary, path)
+        for attempt in range(REPLACE_ATTEMPTS):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == REPLACE_ATTEMPTS - 1:
+                    raise
+                time.sleep(REPLACE_BACKOFF * (attempt + 1))
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()

@@ -22,7 +22,23 @@ LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+\S")
 FENCE = re.compile(r"^\s*```")
 THEMATIC = re.compile(r"^\s*---\s*$")
 
-DEFAULT_EXCLUDES = (".obsidian", ".trash", ".perspirator", "Attachments")
+# Two different questions were being answered by one flat list per tool, which
+# is why four of them had drifted apart. Kept separate so a difference between
+# tools is either explained or visibly a defect.
+#
+# Folders that structurally never hold authored notes. This is a fact about the
+# vault's layout, not a policy, so no tool has a reason to differ — one that
+# does is a bug. (`Neighbour Retrieval.md`'s `## Exempt` currently names the
+# same four, but that is a configurable retrieval choice which happens to
+# coincide; it is loaded and validated from Markdown, not from here.)
+NON_NOTE_FOLDERS = (".obsidian", ".trash", ".perspirator", "Attachments")
+
+# Basic Memory's corpus. Whether it is in scope is a real corpus choice: the
+# neighbour index includes it deliberately, while a tool that maps or writes
+# root vault notes excludes it. Every exclusion of it should say why.
+MEMORY_FOLDER = "memory"
+
+DEFAULT_EXCLUDES = NON_NOTE_FOLDERS
 DEFAULT_MAX_TOKENS = 256
 
 

@@ -42,7 +42,8 @@ from pathlib import Path
 # contract itself stays owned by problem_half.split_note().
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from problem_half import split_note  # noqa: E402
-from note_chunks import body_offset, extract_links, parse_frontmatter  # noqa: E402
+from note_chunks import (MEMORY_FOLDER, NON_NOTE_FOLDERS, body_offset,  # noqa: E402
+                         extract_links, parse_frontmatter)
 
 
 def index_note(path: Path, vault_root: Path):
@@ -102,10 +103,9 @@ def main():
         print(f"error: not a directory: {vault_root}", file=sys.stderr)
         sys.exit(2)
 
-    # Default excludes: Obsidian/tool internals, imported attachments, and the
-    # basic-memory cross-app layer (kept separate from the live problem index).
-    default_excludes = [".obsidian", ".trash", ".perspirator",
-                        "Attachments", "memory"]
+    # Excludes `memory` because this maps root vault Problem Notes and the
+    # basic-memory cross-app layer is kept separate from the live problem index.
+    default_excludes = [*NON_NOTE_FOLDERS, MEMORY_FOLDER]
     exclude_norm = [e.replace("\\", "/").strip("/")
                     for e in (excludes + default_excludes)]
 

@@ -48,11 +48,16 @@ import re
 import sys
 from pathlib import Path
 
+from note_chunks import MEMORY_FOLDER, NON_NOTE_FOLDERS
 from problem_half import split_note
 
 
 INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-EXCLUDED_PARTS = {".obsidian", ".trash", ".perspirator", "memory"}
+# Excludes `memory` because this writes root vault Problem Notes and `memory/`
+# belongs to Basic Memory. `Attachments` was missing here while every other
+# tool excluded it — an unexplained difference, so a defect rather than a
+# scoping choice.
+EXCLUDED_PARTS = {*NON_NOTE_FOLDERS, MEMORY_FOLDER}
 SEPARATOR = re.compile(r"^\*\*\*\s*$", re.MULTILINE)
 # A locator says where a source lives and is also the duplicate guard, so it
 # must be a stable, textually unique reference. `https` is one URI scheme among
