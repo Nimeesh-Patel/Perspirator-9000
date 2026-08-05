@@ -104,13 +104,19 @@ obsidian_cli.py: bounded links/backlinks/properties after retrieval
 agent reads candidate notes and judges identity, relation, conflict, placement
 ```
 
-anki_sync.py is the external-consumer boundary for Problem Notes. It renders
-the canonical problem and conjecture halves, updates an existing numeric
-anki_note_id in place, and reports the identity of a newly created card for
-the caller to patch back into frontmatter. It never edits the vault itself, so
-an Obsidian change and its Anki synchronization remain separately inspectable.
-Wikilink display text remains authored text, while unambiguous vault aliases
-are resolved to canonical file paths before Obsidian URIs are exported.
+anki_query.py is the read-only boundary onto the external consumer. Anki
+holds facts no other provider has — which cards exist, what a card's fields
+currently say, and what its review history is — and those facts have already
+refuted vault-side conjectures. It owns no rendering, and writes are
+whitelisted out, so a destructive Anki operation stays an explicit approved
+act rather than a side effect of a query.
+
+Rendering a Problem Note into card HTML has exactly one implementation,
+Interest's `AnkiSyncService`, reachable from a shell through
+`dart run tool/sync_anki_notes.dart`. A second renderer here was retired on
+2026-08-05: it had silently diverged, dropping the hard line breaks Interest
+promotes, so the same note produced different cards depending on which tool
+touched it last. One current rule, one implementation.
 
 Formation is specialised because authored structures explain different units;
 processing is shared because every unit has the same provenance, embedding,
@@ -274,10 +280,9 @@ relate it. Conflict is a candidate problem, not untidiness to erase.
 
 ## Dependencies and verification
 
-Python 3 is sufficient for most structural and source tools. `anki_sync.py`
-additionally uses `markdown-it-py` to render canonical Markdown into Anki
-fields. The neighbour subsystem additionally uses `numpy`, `torch`, and
-`transformers`. Obsidian CLI
+Python 3 and the standard library are sufficient for every structural and
+source tool. The neighbour subsystem is the sole exception, adding `numpy`,
+`torch`, and `transformers` for the embedding model. Obsidian CLI
 is optional for application-indexed context; bare `obsidian` is its availability
 probe, and configured filesystem fallback keeps vector retrieval usable without
 it. `x_posts.py` uses X's public syndication endpoint and the payload's
@@ -297,7 +302,6 @@ Tests are grouped by independently breakable contract rather than by module:
 python test_note_chunks.py   # Markdown structure and Problem Note boundaries
 python test_neighbour.py     # index lifecycle, retrieval, recurrence consumers
 python test_sources.py       # source adapters and source-to-note invariants
-python test_anki_sync.py     # identity-preserving Anki rendering and updates
 python test_note_rename.py   # guarded Obsidian rename identity transaction
 ```
 

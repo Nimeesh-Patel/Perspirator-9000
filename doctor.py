@@ -171,6 +171,16 @@ def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
             check(f"installed script matches shared source: {script}",
                   installed.read_bytes() == source.read_bytes())
 
+    # The invariant is that the installed toolkit *equals* the repository
+    # toolkit. Checking only that listed scripts arrived leaves the other
+    # direction unguarded: install.py deliberately never removes files, so a
+    # retired script stays installed and an agent can still route work to it.
+    orphans = sorted(path.name for path in tools_dir.glob("*.py")
+                     if path.name not in SCRIPT_NAMES)
+    check("no retired script is still installed", not orphans,
+          "installed but no longer shared: " + ", ".join(orphans)
+          if orphans else "")
+
     if template is not None:
         check("render matches canonical bootstrap source exactly",
               text == render(template, vault, tools_dir))

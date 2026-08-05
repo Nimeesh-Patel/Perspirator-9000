@@ -59,7 +59,7 @@ class NoteRenameTests(unittest.TestCase):
             self.assertEqual((vault / "Source.md").read_text(encoding="utf-8"),
                              "See [[New]].\n")
             self.assertEqual(result["stale_old_links"], [])
-            self.assertEqual(result["anki_sync_candidates"],
+            self.assertEqual(result["resync_candidates"],
                              ["New.md", "Source.md"])
 
     def test_destination_collision_and_path_are_refused(self):

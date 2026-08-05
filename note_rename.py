@@ -105,7 +105,7 @@ def public(plan, status="planned", **extra):
     result = {"status": status, "old": plan["old"], "new": plan["new"],
               "sha256": plan["sha256"], "backlinks": plan["backlinks"],
               "old_links": plan["old_links"],
-              "anki_sync_candidates": sorted(
+              "resync_candidates": sorted(
                   set([plan["new"], *plan["backlinks"].keys()]))}
     result.update(extra)
     return result
