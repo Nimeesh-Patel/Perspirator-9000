@@ -227,6 +227,25 @@ def formation_args(config, embedder):
 REPLACE_ATTEMPTS = 12
 REPLACE_BACKOFF = 0.02
 
+SNIPPET_CHARS = 220
+
+
+def snippet(text):
+    """One collapsed excerpt, marked when it was cut.
+
+    A snippet used to be truncated twice — stored at 220 characters, then cut
+    again to 170 when printed by `match` and 150 by `pairs` — with no mark
+    either time. A reader could not tell a short problem from a long one
+    silently beheaded, and Nimeesh's own hand evaluation of a pairs run called
+    14 of 43 candidates truncated, 11 of those unjudgeable because of it.
+
+    One limit, stated once, and an ellipsis so the cut is visible.
+    """
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= SNIPPET_CHARS:
+        return collapsed
+    return collapsed[:SNIPPET_CHARS].rstrip() + "…"
+
 
 def _atomic_savez(path, **arrays):
     """Replace one NumPy archive atomically, including under concurrent refresh.
@@ -531,7 +550,7 @@ def match_query(vault, config, meta, vectors, query, query_vector,
                 unit["stem"] in src_links
                 or src_stem in note_link_stems(vault, unit["note"])),
             "shares_referrers": sorted(src_referrers & dest_referrers)[:5],
-            "snippet": " ".join(unit["text"].split())[:220],
+            "snippet": snippet(unit["text"]),
         })
     graph = expand_graph(vault, results, config, args.graph, refs, cli=cli)
     return {"query_note": source_note, "results": results, "graph": graph,
@@ -576,7 +595,7 @@ def print_match(result, header):
               + ("  already-links" if item["already_links"] else "")
               + (f"  shares-referrers: {', '.join(item['shares_referrers'])}"
                  if item["shares_referrers"] else ""))
-        print(f"     {item['snippet'][:170]}")
+        print(f"     {item['snippet']}")
 
 
 def cmd_match(args):
@@ -695,13 +714,13 @@ def cmd_pairs(args):
                 'note': left['note'], 'heading': left['heading'],
                 'side': left['side'], 'unit': left['unit'],
                 'strategy': left['strategy'],
-                'snippet': ' '.join(left['text'].split())[:220],
+                'snippet': snippet(left['text']),
             },
             'right': {
                 'note': right['note'], 'heading': right['heading'],
                 'side': right['side'], 'unit': right['unit'],
                 'strategy': right['strategy'],
-                'snippet': ' '.join(right['text'].split())[:220],
+                'snippet': snippet(right['text']),
             },
             'already_links': (right['stem'] in left_links
                               or left['stem'] in right_links),
@@ -738,8 +757,8 @@ def cmd_pairs(args):
         print('\n[{:>2}] {:.3f}  {}  <->  {}{}'.format(
             result['rank'], result['score'], result['left']['note'],
             result['right']['note'], suffix))
-        print('     L: {}'.format(result['left']['snippet'][:150]))
-        print('     R: {}'.format(result['right']['snippet'][:150]))
+        print('     L: {}'.format(result['left']['snippet']))
+        print('     R: {}'.format(result['right']['snippet']))
     return 0
 
 
