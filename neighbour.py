@@ -413,12 +413,29 @@ def filesystem_context(vault, note, refs, limit):
     }
 
 
+def drop_exempt(paths, exempt):
+    """Remove exempt paths from graph context, whichever provider supplied it.
+
+    `## Exempt` was silently doing two jobs: excluding notes from the index,
+    and — only because `vault_links` is given the same list — hiding them from
+    the filesystem graph provider. The Obsidian provider never saw the list at
+    all, so the same exempt folder was invisible to one provider and returned
+    as backlinks by the other. Exempt now means one thing for both.
+    """
+    if not exempt:
+        return list(paths)
+    return [path for path in paths
+            if not any(path == entry or path.startswith(entry + "/")
+                       for entry in exempt)]
+
+
 def expand_graph(vault, results, config, mode, refs, cli=None):
     """Expand selected note paths after ranking; never alter vector scores."""
     if mode == "none":
         return {"provider": "none", "status": "disabled", "notes": []}
     selected = config["graph"]["provider"] if mode == "configured" else mode
     limit = config["graph"]["limit"]
+    exempt = config.get("exempt") or ()
     notes = [result["note"] for result in results[:limit]]
     if selected == "filesystem":
         return {"provider": "filesystem", "status": "ok",
@@ -426,7 +443,14 @@ def expand_graph(vault, results, config, mode, refs, cli=None):
 
     cli = cli or ObsidianCLI(
         vault, timeout=config["graph"]["timeout"], limit=limit)
-    contexts = [cli.note_context(note) for note in notes]
+    contexts = []
+    for note in notes:
+        context = cli.note_context(note)
+        if context.get("status") == "ok":
+            context = {**context,
+                       "backlinks": drop_exempt(context.get("backlinks", []), exempt),
+                       "links": drop_exempt(context.get("links", []), exempt)}
+        contexts.append(context)
     failures = [context for context in contexts if context["status"] != "ok"]
     if not failures:
         return {"provider": "obsidian", "status": "ok", "notes": contexts,
