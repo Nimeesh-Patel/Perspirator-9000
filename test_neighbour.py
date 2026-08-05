@@ -199,6 +199,43 @@ def main():
                   "recurring cultural criticism preserves rational correction",
                   "recurring cultural criticism prevents rational correction") > 0.5)
 
+        corpus = ["the growth of knowledge is unpredictable",
+                  "knowledge grows through criticism",
+                  "memetic warfare spreads rational memes",
+                  "a tradition of criticism corrects errors",
+                  "knowledge and criticism and errors and growth"]
+        idf = nb.inverse_document_frequency(corpus)
+        words = [nb.content_words(text) for text in corpus]
+        check("a ubiquitous word carries almost no weight",
+              idf["knowledge"] < idf["memetic"] / 2,
+              f"knowledge={idf['knowledge']:.2f} memetic={idf['memetic']:.2f}")
+        check("a rare term scores its unit fully",
+              nb.lexical_coverage(nb.content_words("memetic warfare"),
+                                  words[2], idf) == 1.0)
+        check("a two-word query is not zeroed the way lexical_overlap zeroes it",
+              nb.lexical_coverage(nb.content_words("memetic warfare"),
+                                  words[2], idf) > 0
+              and nb.lexical_overlap("memetic warfare", corpus[2]) == 0.0)
+        check("a unit sharing only a common word scores near zero",
+              nb.lexical_coverage(nb.content_words("memetic warfare"),
+                                  words[0], idf) == 0.0)
+
+        meta = [{"note": f"n{i}.md", "text": text} for i, text in enumerate(corpus)]
+        eligible = list(range(len(corpus)))
+        cosine = [0.9, 0.8, 0.1, 0.7, 0.6]
+        lexical = nb.lexical_scores("memetic warfare", meta, eligible, cosine)
+        order, matched = nb.merge_rankers(eligible, meta, cosine, lexical, 4, "both")
+        check("a lexical-only hit reaches the list cosine would have buried",
+              2 in order and "lexical" in matched[2], f"{order} {matched}")
+        check("the top cosine hit is still first",
+              order[0] == 0 and "embedding" in matched[0], str(order))
+        embed_only, _ = nb.merge_rankers(eligible, meta, cosine, lexical, 4, "embedding")
+        check("--rank embedding reproduces the pure cosine order",
+              embed_only == nb.collapse_by_note(eligible, meta, cosine, 4),
+              str(embed_only))
+        check("a zero-lexical unit is never nominated by the lexical ranker",
+              all("lexical" not in matched[i] for i in order if lexical[i] == 0))
+
         left = ("How can a criticism-preserving institution remain corrigible "
                 "when its leaders become attached to authority?")
         right = ("What lets an organisation replace entrenched governors while "

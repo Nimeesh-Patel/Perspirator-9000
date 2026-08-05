@@ -14,6 +14,7 @@ import re
 import sys
 import tempfile
 import time
+from itertools import zip_longest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,7 +43,14 @@ FORMATION = {
 
 
 def lexical_overlap(left, right):
-    """Cheap independent signal; never a semantic-identity test."""
+    """Cheap independent signal; never a semantic-identity test.
+
+    Kept for `problem_candidates.py`, whose thresholds in
+    `Candidate Selection.md` are calibrated against this exact formula. Its
+    `< 4` guard zeroes any comparison where either side has fewer than four
+    content words, which is 42% of this vault's problem identities and most
+    natural questions — see `lexical_coverage`, which supersedes it.
+    """
     def tokens(text):
         return {word for word in re.findall(r"[a-z][a-z-]{3,}", text.lower())
                 if word not in LEXICAL_STOPWORDS}
@@ -50,6 +58,54 @@ def lexical_overlap(left, right):
     if len(a) < 4 or len(b) < 4:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+WORD = re.compile(r"[a-z][a-z-]{2,}")
+
+
+def content_words(text):
+    """Lowercase word forms, with no hand-maintained stopword list.
+
+    A curated stopword list is a manual approximation of inverse document
+    frequency, and it approximates it badly on a homogeneous corpus: this
+    vault says "problem", "knowledge" and "criticism" everywhere, so those
+    had to be added by hand while the next ubiquitous term will not be.
+    Document frequency measures that directly, from the corpus itself.
+    """
+    return set(WORD.findall((text or "").lower()))
+
+
+def inverse_document_frequency(texts):
+    """How discriminative each word is, measured over the indexed corpus."""
+    import math
+    total = len(texts) or 1
+    seen = {}
+    for text in texts:
+        for word in content_words(text):
+            seen[word] = seen.get(word, 0) + 1
+    return {word: math.log(total / count) for word, count in seen.items()}
+
+
+def lexical_coverage(query_words, unit_words, idf):
+    """Share of the query's discriminative weight present in this unit.
+
+    Reads as "this unit carries 80% of the rare terms you asked about". It
+    needs no minimum-length guard, because a short query of rare words is
+    exactly the case that should score highly rather than be zeroed, and a
+    coincidental match on a ubiquitous word carries almost no weight by
+    construction.
+
+    This is the signal cosine cannot supply: an exact rare term — a coined
+    phrase, a proper name, `***` — is where a 384-dimension general-purpose
+    embedding is weakest and a lexical match is strongest.
+    """
+    if not query_words:
+        return 0.0
+    weight = sum(idf.get(word, 0.0) for word in query_words)
+    if weight <= 0:
+        return 0.0
+    shared = sum(idf.get(word, 0.0) for word in query_words & unit_words)
+    return shared / weight
 
 
 def keyed_bullets(text, heading):
@@ -532,7 +588,12 @@ def match_query(vault, config, meta, vectors, query, query_vector,
         if source_note and unit["note"] == source_note:
             continue
         eligible.append(index)
-    kept = collapse_by_note(eligible, meta, scores, args.k)
+
+    lexical = lexical_scores(query["text"], meta, eligible, scores)
+    # getattr so a caller holding a plain namespace still gets both rankers,
+    # which is the behaviour the CLI defaults to.
+    kept, matched_by = merge_rankers(eligible, meta, scores, lexical,
+                                     args.k, getattr(args, "rank", "both"))
 
     src_stem = Path(source_note).stem if source_note else None
     src_referrers = {p.stem for p in refs.get(src_stem, set())} if src_stem else set()
@@ -543,6 +604,8 @@ def match_query(vault, config, meta, vectors, query, query_vector,
         dest_referrers = {p.stem for p in refs.get(unit["stem"], set())}
         results.append({
             "rank": rank, "score": round(float(scores[index]), 2),
+            "lexical_score": round(float(lexical[index]), 2),
+            "matched_by": matched_by[index],
             "note": unit["note"], "heading": unit["heading"],
             "side": unit["side"], "unit": unit["unit"],
             "strategy": unit["strategy"], "corpus": unit["corpus"],
@@ -555,6 +618,80 @@ def match_query(vault, config, meta, vectors, query, query_vector,
     graph = expand_graph(vault, results, config, args.graph, refs, cli=cli)
     return {"query_note": source_note, "results": results, "graph": graph,
             "distribution": score_distribution(scores, eligible)}
+
+
+_IDF_CACHE = {}
+
+
+def lexical_scores(query_text, meta, eligible, cosine):
+    """IDF-weighted coverage of the query, per eligible unit.
+
+    Ties are broken by cosine at a magnitude six orders below the coverage
+    score. That is a tiebreak, not a blend: a one-word query makes every unit
+    containing the word score 1.0, and "the closest of the units that all
+    contain your term" is a better order than filesystem order.
+    """
+    key = id(meta)
+    if key not in _IDF_CACHE:
+        texts = [unit["text"] for unit in meta]
+        _IDF_CACHE[key] = (inverse_document_frequency(texts),
+                           [content_words(text) for text in texts])
+    idf, words = _IDF_CACHE[key]
+    query_words = content_words(query_text)
+    scores = {}
+    for index in eligible:
+        base = lexical_coverage(query_words, words[index], idf)
+        scores[index] = base + 1e-6 * float(cosine[index]) if base else 0.0
+    return scores
+
+
+def merge_rankers(eligible, meta, cosine, lexical, limit, mode):
+    """Two independent rankers, interleaved, with provenance kept.
+
+    Nimeesh's 2026 blind comparison found cosine and lexical surfacing
+    *different* pairs at roughly equal precision, and on this corpus their
+    top-10 sets still overlap by only 7%. Choosing one therefore discards
+    most of the other's recall — which is what happened, since lexical
+    survived only inside `problem_candidates.py`.
+
+    They are interleaved rather than blended. A blended score would need a
+    weight nobody can justify and would hide which signal fired; interleaving
+    needs no constant, gives each ranker equal claim on the top of the list,
+    and `matched_by` says who found what so the agent can discount a hit that
+    only matched words.
+    """
+    by_cosine = [] if mode == "lexical" else collapse_by_note(
+        eligible, meta, cosine, limit)
+    # Only units the lexical ranker actually scored. `collapse_by_note` fills
+    # its quota from the zero-scoring tail otherwise, and a zero is not a
+    # nomination — filtering here rather than inside the merge, because a
+    # filler index can also be a genuine cosine hit and must not be dropped
+    # for appearing in both lists.
+    by_lexical = [] if mode == "embedding" else [
+        index for index in collapse_by_note(
+            [i for i in eligible if lexical[i] > 0], meta, lexical, limit)
+        if lexical[index] > 0]
+
+    cosine_notes = {meta[i]["note"] for i in by_cosine}
+    lexical_notes = {meta[i]["note"] for i in by_lexical}
+
+    order, seen = [], set()
+    for pair in zip_longest(by_cosine, by_lexical):
+        for index in pair:
+            if index is None or meta[index]["note"] in seen:
+                continue
+            seen.add(meta[index]["note"])
+            order.append(index)
+    matched_by = {}
+    for index in order:
+        note = meta[index]["note"]
+        found = []
+        if note in cosine_notes:
+            found.append("embedding")
+        if note in lexical_notes:
+            found.append("lexical")
+        matched_by[index] = found or ["embedding"]
+    return order[:limit], matched_by
 
 
 def score_distribution(scores, eligible):
@@ -590,6 +727,8 @@ def print_match(result, header):
         where = " > ".join(item["heading"]) or "(no heading)"
         print(f"\n[{item['rank']:>2}] {item['score']:.2f}  "
               f"{item['note']} :: {where}")
+        print(f"     by {'+'.join(item.get('matched_by', ['embedding']))}"
+              f"  cos {item['score']:.2f}  lex {item.get('lexical_score', 0):.2f}")
         print(f"     {item['corpus']}/{item['side']}/{item['unit']} "
               f"[{item['strategy']}]"
               + ("  already-links" if item["already_links"] else "")
@@ -781,6 +920,9 @@ def main():
 
     p_match = sub.add_parser("match", help="rank units, collapse notes, expand context")
     p_match.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    p_match.add_argument("--rank", choices=("both", "embedding", "lexical"),
+                         default="both",
+                         help="which rankers nominate candidates")
     p_match.add_argument("--index")
     group = p_match.add_mutually_exclusive_group(required=True)
     group.add_argument("--text", action="append", metavar="TEXT",
