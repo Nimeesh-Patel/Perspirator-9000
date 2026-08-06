@@ -346,11 +346,38 @@ def drift_key(unit):
 
     `chunk_id` hashes the text, so any edit makes a unit a different unit and
     its previous vector is discarded. That is correct for the index and wrong
-    for asking how an idea changed, which needs the same unit tracked across
-    its rewordings. A note's stated problem and its conjecture each have one
-    unit and a stable heading path; blocks reorder, so they are not tracked.
+    for asking how an idea changed, which needs the same side of the same note
+    tracked across its rewordings. Blocks are excluded: they reorder, so their
+    identity does not survive an edit.
+
+    The key is deliberately per *side*, not per segment. A long conjecture
+    splits into several units at authored boundaries, and how many segments it
+    has changes as it is edited — so a per-segment key compares segment three
+    of yesterday against segment three of today, which are different passages,
+    and reports the difference as a change of mind. Sides are pooled instead;
+    see `side_vectors`.
     """
-    return "␟".join([unit["note"], unit["unit"], *unit["heading"]])
+    return "␟".join([unit["note"], unit["unit"]])
+
+
+def side_vectors(units, ids, vectors):
+    """One unit vector per note-side, mean-pooled over its segments.
+
+    The question is whether an idea moved, not whether its third paragraph
+    did, and the segmentation is an artifact of length rather than of meaning.
+    """
+    import numpy as np
+    grouped = {}
+    for unit, cid in zip(units, ids):
+        if unit["unit"] in DRIFT_UNITS and cid in vectors:
+            grouped.setdefault(drift_key(unit), []).append(vectors[cid])
+    pooled = {}
+    for key, group in grouped.items():
+        total = np.sum(np.vstack(group), axis=0)
+        norm = float(np.linalg.norm(total))
+        if norm > 0:
+            pooled[key] = total / norm
+    return pooled
 
 
 def record_drift(path, old_meta, old_ids, known_vectors, chunks, ids, vectors):
@@ -366,26 +393,20 @@ def record_drift(path, old_meta, old_ids, known_vectors, chunks, ids, vectors):
     No threshold is applied. What counts as a changed idea is a judgment, and
     the log reports the number so the judgment stays with the reader.
     """
-    old_by_key = {}
-    for unit, cid in zip(old_meta, old_ids):
-        if unit["unit"] in DRIFT_UNITS and cid in known_vectors:
-            old_by_key[drift_key(unit)] = known_vectors[cid]
+    before = side_vectors(old_meta, old_ids, known_vectors)
+    after = side_vectors(chunks, ids, vectors)
     events = []
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-    for unit, cid in zip(chunks, ids):
-        if unit["unit"] not in DRIFT_UNITS:
+    for key, current in after.items():
+        previous = before.get(key)
+        if previous is None:
             continue
-        previous = old_by_key.get(drift_key(unit))
-        if previous is None or cid not in vectors:
+        similarity = float(previous @ current)
+        if similarity >= 0.99999:
             continue
-        current = vectors[cid]
-        if previous is current or float(previous @ current) >= 0.99999:
-            continue
-        events.append({
-            "at": stamp, "note": unit["note"], "unit": unit["unit"],
-            "heading": unit["heading"],
-            "similarity": round(float(previous @ current), 4),
-        })
+        note, unit_kind = key.split("␟")
+        events.append({"at": stamp, "note": note, "unit": unit_kind,
+                       "similarity": round(similarity, 4)})
     if not events:
         return 0
     path.parent.mkdir(parents=True, exist_ok=True)

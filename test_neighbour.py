@@ -242,12 +242,14 @@ def main():
         moved = _np.array([1.0, 0.0], "float32")
         same = _np.array([0.0, 1.0], "float32")
         near = _np.array([0.06, 0.998], "float32")
-        old_units = [unit("a.md", "conjecture"), unit("b.md", "conjecture"),
-                     unit("c.md", "block")]
-        new_units = [unit("a.md", "conjecture"), unit("b.md", "conjecture"),
-                     unit("c.md", "block")]
-        old_ids, new_ids = ["o1", "o2", "o3"], ["n1", "n2", "n3"]
-        vectors = {"o1": same, "o2": same, "o3": same,
+        # a.md's conjecture is SPLIT into two segments before and one after:
+        # a per-segment key would compare unlike passages and cry drift.
+        old_units = [unit("a.md", "conjecture"), unit("a.md", "conjecture"),
+                     unit("b.md", "conjecture"), unit("c.md", "block")]
+        new_units = [unit("a.md", "conjecture"),
+                     unit("b.md", "conjecture"), unit("c.md", "block")]
+        old_ids, new_ids = ["o1", "o1b", "o2", "o3"], ["n1", "n2", "n3"]
+        vectors = {"o1": same, "o1b": same, "o2": same, "o3": same,
                    "n1": moved, "n2": same, "n3": moved}
         drift_log = root / "drift.jsonl"
         written = nb.record_drift(drift_log, old_units, old_ids, vectors,
@@ -272,6 +274,16 @@ def main():
               len(events) == 1 and 0.9 < events[0]["similarity"] < 1.0,
               str(events))
 
+
+        split_old = [unit("d.md", "conjecture"), unit("d.md", "conjecture")]
+        split_new = [unit("d.md", "conjecture"), unit("d.md", "conjecture"),
+                     unit("d.md", "conjecture")]
+        vecs = {"p1": same, "p2": same, "q1": same, "q2": same, "q3": same}
+        log2 = root / "drift2.jsonl"
+        n = nb.record_drift(log2, split_old, ["p1", "p2"], vecs,
+                            split_new, ["q1", "q2", "q3"], vecs)
+        check("re-segmenting an unchanged conjecture is not reported as drift",
+              n == 0, f"{n} events")
         check("drift identity survives a rewrite that changes chunk_id",
               nb.drift_key(unit("a.md", "conjecture", ("H1",)))
               == nb.drift_key(unit("a.md", "conjecture", ("H1",))))
