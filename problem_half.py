@@ -2,8 +2,7 @@
 """Parse the structural problem/conjecture boundary of an Obsidian note.
 
 The parser is deliberately semantic-free: it recognizes frontmatter and the
-first line containing only ``***``.  Consumers can reuse the full structure;
-``split_note`` preserves the original cheap problem-side API and CLI contract.
+first line containing only ``***``. Consumers reuse one full structural record.
 """
 
 import json
@@ -96,12 +95,6 @@ def parse_note(text: str):
         "conjecture_start": conjecture_start,
         "conjecture_end": conjecture_end,
     }
-
-
-def split_note(text: str):
-    """Backward-compatible ``(frontmatter, problem, has_separator)`` API."""
-    parsed = parse_note(text)
-    return parsed["frontmatter"], parsed["problem"], parsed["has_separator"]
 
 
 def body_after_frontmatter(text: str, frontmatter=None):

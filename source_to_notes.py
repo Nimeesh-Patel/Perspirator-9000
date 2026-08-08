@@ -49,7 +49,7 @@ import sys
 from pathlib import Path
 
 from note_chunks import MEMORY_FOLDER, NON_NOTE_FOLDERS
-from problem_half import split_note
+from problem_half import parse_note
 
 
 INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -140,8 +140,9 @@ def read_existing(path):
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"cannot read existing note {path}: {exc}") from exc
     separators = len(SEPARATOR.findall(text.replace("\r\n", "\n").replace("\r", "\n")))
-    _, problem, has_separator = split_note(text)
-    if not has_separator or separators != 1:
+    parsed = parse_note(text)
+    problem = parsed["problem"]
+    if not parsed["has_separator"] or separators != 1:
         raise ValueError(
             f"existing target is not one ordinary Problem Note: {path.name}")
     return raw, text, (problem or "").strip()

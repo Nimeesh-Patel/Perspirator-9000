@@ -10,7 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import note_chunks as nc
 import policy_index as pi
-from problem_half import parse_note, split_note
+import doctor
+from problem_half import parse_note
 
 FAILS = []
 
@@ -90,9 +91,6 @@ def main():
               == parsed["problem"]
               and parsed["normalized"][parsed["conjecture_start"]:parsed["conjecture_end"]]
               == parsed["conjecture"])
-        check("old problem-half API remains compatible",
-              split_note(PROBLEM_NOTE) == (parsed["frontmatter"], parsed["problem"], True))
-
         units = nc.chunks_for_note(p_problem, root)
         check("short Problem Note has exactly two units", len(units) == 2, str(len(units)))
         check("problem identity is complete",
@@ -217,6 +215,15 @@ zeta eta theta iota kappa.
               nc.chunks_for_note(build(root, "empty.md", ""), root) == [])
         check("frontmatter-only note returns no units",
               nc.chunks_for_note(build(root, "fm.md", "---\ntitle: x\n---\n"), root) == [])
+
+        proposals = root / "memory/perspirator/proposals"
+        build(root, "memory/perspirator/proposals/open.md",
+              "---\nstatus: partially-applied\n---\n")
+        build(root, "memory/perspirator/proposals/done.md",
+              "---\nstatus: completed\n---\n")
+        build(root, "memory/perspirator/proposals/README.md", "# Proposals\n")
+        check("terminal proposals are surfaced for deletion",
+              doctor.terminal_proposals(proposals) == ["done.md"])
 
         build(root, "memory/policies/Policy Loader.md", """---
 title: Policy Loader

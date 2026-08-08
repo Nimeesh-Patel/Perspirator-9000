@@ -123,9 +123,9 @@ processing is shared because every unit has the same provenance, embedding,
 filtering, ranking, note-collapse, and context-expansion contract. Generic token
 windows are a last formation fallback, not the default. A logical unit whose
 embedding context is still long is covered by token windows and mean-pooled
-back to one vector rather than silently truncated. The problem-side API remains
-a wrapper over the same parser, so cheap traversal and embedding retrieval
-cannot disagree merely because they parsed `***` separately.
+back to one vector rather than silently truncated. Cheap traversal and embedding
+retrieval consume the same full parser record, so they cannot disagree merely
+because they parsed `***` separately.
 
 Obsidian context is post-retrieval evidence, not embedding input. The read-only
 adapter probes the running app with bare `obsidian`, targets exact `path=`
@@ -180,8 +180,7 @@ relations, and conflicts.
 - `install.py` renders an adapter and copies the shared toolkit.
 - `doctor.py` validates the active vault contract, source scripts, installed
   adapters, byte equality, and cross-adapter consistency.
-- `problem_half.py` parses frontmatter and both sides once; its old problem-side
-  API remains stable.
+- `problem_half.py` parses frontmatter and both sides into one structural record.
 - `note_chunks.py` forms inspectable retrieval units using the configured
   structural strategy.
 - `problem_index.py` creates a disposable map of root-vault Problem Notes.
@@ -194,10 +193,18 @@ relations, and conflicts.
 - `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.
+- `anki_query.py` provides bounded read-only AnkiConnect facts without owning rendering.
 - `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
   Note Tweets and attached X Articles when structurally present.
+- `readera_highlights.py` recovers complete highlights, annotations, and withdrawals
+  from ReadEra snapshot backups.
+- `highlights_to_notes.py` append-only files recovered ReadEra records into their
+  root `collection: Books` entity.
+- `video_sources.py` anchors selected spoken passages to caption timestamps.
 - `source_to_notes.py` validates an explanatory grouping plan, creates new
   Problem Notes, or applies explicit guarded append-only source blocks.
+- `evaluate_retrieval.py` measures retrieval recall against authored wikilinks.
+- `adapters.py` is the single install/validation manifest for agent targets and scripts.
 
 Every CLI documents its detailed arguments and output with `--help`. The code
 is the canonical data-contract definition; duplicating every schema here made

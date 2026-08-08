@@ -25,39 +25,12 @@ from obsidian_cli import ObsidianCLI  # noqa: E402
 
 CONFIG_NOTE = ("memory", "perspirator", "Neighbour Retrieval.md")
 
-LEXICAL_STOPWORDS = set("""
-a an and are as at be because been before being between both but by can could did do does
-doing done each even for from further had has have having how if in into is it its more most
-no nor not of off on once only or other our out over own same should so some such than that
-the their them then there these they this those through to too under until up very was were
-what when where which while who whom why will with within without would yet you your
-problem problems note notes vault agent current remains remain rather still must may might
-""".split())
-
 FORMATION = {
     "problem": "identity-and-contextual-conjecture",
     "non-problem": "authored-blocks",
     "oversize": "authored-boundaries-then-token-windows",
     "embedding-oversize": "mean-pooled-token-windows",
 }
-
-
-def lexical_overlap(left, right):
-    """Cheap independent signal; never a semantic-identity test.
-
-    Kept for `problem_candidates.py`, whose thresholds in
-    `Candidate Selection.md` are calibrated against this exact formula. Its
-    `< 4` guard zeroes any comparison where either side has fewer than four
-    content words, which is 42% of this vault's problem identities and most
-    natural questions — see `lexical_coverage`, which supersedes it.
-    """
-    def tokens(text):
-        return {word for word in re.findall(r"[a-z][a-z-]{3,}", text.lower())
-                if word not in LEXICAL_STOPWORDS}
-    a, b = tokens(left), tokens(right)
-    if len(a) < 4 or len(b) < 4:
-        return 0.0
-    return len(a & b) / len(a | b)
 
 
 WORD = re.compile(r"[a-z][a-z-]{2,}")

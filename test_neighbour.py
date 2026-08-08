@@ -194,11 +194,6 @@ def main():
             race_vectors = len(race_data["vectors"])
         check("concurrent refresh writes leave one complete readable index",
               race_writer in (1, 2) and race_vectors == 1)
-        check("lexical overlap stays independent",
-              nb.lexical_overlap(
-                  "recurring cultural criticism preserves rational correction",
-                  "recurring cultural criticism prevents rational correction") > 0.5)
-
         corpus = ["the growth of knowledge is unpredictable",
                   "knowledge grows through criticism",
                   "memetic warfare spreads rational memes",
@@ -212,10 +207,9 @@ def main():
         check("a rare term scores its unit fully",
               nb.lexical_coverage(nb.content_words("memetic warfare"),
                                   words[2], idf) == 1.0)
-        check("a two-word query is not zeroed the way lexical_overlap zeroes it",
+        check("a two-word query is not zeroed",
               nb.lexical_coverage(nb.content_words("memetic warfare"),
-                                  words[2], idf) > 0
-              and nb.lexical_overlap("memetic warfare", corpus[2]) == 0.0)
+                                  words[2], idf) > 0)
         check("a unit sharing only a common word scores near zero",
               nb.lexical_coverage(nb.content_words("memetic warfare"),
                                   words[0], idf) == 0.0)
@@ -297,6 +291,8 @@ def main():
                  "retaining practices that expose mistakes?")
         write(root, "memory/Left.md", f"## Problems\n\n{left}\n")
         write(root, "memory/Right.md", f"## Questions\n\n{right}\n")
+        write(root, "memory/perspirator/runs/derived.md",
+              f"## Problems\n\n{left}\n")
         recurrence_index = {
             "meta": [{"stem": "Left", "text": left},
                      {"stem": "Right", "text": right}],
@@ -305,9 +301,12 @@ def main():
         with patch.object(pc, "load_index", return_value=recurrence_index):
             recurrence = pc.signal_recurrence(
                 root, set(), embedding_threshold=0.9,
-                lexical_threshold=0.9, refresh_index=False)
+                lexical_threshold=0.9, refresh_index=False,
+                excluded={"memory/perspirator/runs"})
         check("recurrence reuses the shared substrate",
               len(recurrence) == 1 and recurrence[0]["matched_by"] == ["embedding"])
+        check("candidate folder exclusions suppress derived report boilerplate",
+              all("derived" not in hit["where"] for hit in recurrence))
         (root / "memory" / "Left.md").unlink()
         (root / "memory" / "Right.md").unlink()
 

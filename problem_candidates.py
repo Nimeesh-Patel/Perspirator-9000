@@ -22,7 +22,8 @@ PROBLEMISH = re.compile(r"problem|conflict|criticism|question", re.I)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from note_chunks import (all_chunks, bullets, read_note as read,  # noqa: E402
                          section, vault_links)
-from neighbour import lexical_overlap, load_index  # noqa: E402
+from neighbour import (content_words, inverse_document_frequency,  # noqa: E402
+                       lexical_coverage, load_index)
 
 
 def load_config(vault):
@@ -39,15 +40,17 @@ def load_config(vault):
         if numbers:
             signals[name.strip().lower()] = numbers
     exempt = {b.strip().lower() for b in bullets(section(text, "## Exempt"))}
+    excluded = {b.strip().replace("\\", "/").strip("/").casefold()
+                for b in bullets(section(text, "## Excluded folders"))}
     template = ""
     block = re.search(r"```text\n(.*?)```", section(text, "## Draft form"), re.S)
     if block:
         template = block.group(1)
-    return signals, exempt, template
+    return signals, exempt, excluded, template
 
 
 
-def stated_problems(vault, exempt):
+def stated_problems(vault, exempt, excluded=()):
     """(note, statement) for every explicitly stated problem in memory/.
 
     A filter over chunks, not a parser: any memory chunk sitting under a
@@ -57,6 +60,10 @@ def stated_problems(vault, exempt):
     """
     found = []
     for chunk in all_chunks(vault, corpus="memory"):
+        note = chunk["note"].replace("\\", "/").casefold()
+        if any(note == folder or note.startswith(folder + "/")
+               for folder in excluded):
+            continue
         if chunk["stem"].lower() in exempt:
             continue
         if not PROBLEMISH.search(" ".join(chunk["heading"])):
@@ -69,14 +76,16 @@ def stated_problems(vault, exempt):
 
 
 def signal_recurrence(vault, exempt, embedding_threshold, lexical_threshold,
-                      refresh_index=True):
+                      refresh_index=True, excluded=()):
     """Surface recurring-problem candidates through the shared substrate.
 
     Embedding and lexical proximity are independent retrieval conjectures. A
     pair survives when either crosses its configured threshold; neither score
     establishes that the statements really express the same problem.
     """
-    items = stated_problems(vault, exempt)
+    items = stated_problems(vault, exempt, excluded)
+    idf = inverse_document_frequency([text for _, text in items])
+    words = {text: content_words(text) for _, text in items}
     loaded = load_index(vault, refresh_index=refresh_index)
     normalized = lambda text: " ".join(text.split())
     slots = {}
@@ -93,7 +102,11 @@ def signal_recurrence(vault, exempt, embedding_threshold, lexical_threshold,
         embedding = None
         if left_slot is not None and right_slot is not None:
             embedding = float(vectors[left_slot] @ vectors[right_slot])
-        lexical = lexical_overlap(left, right)
+        # Recurrence is symmetric: both statements must substantially cover
+        # the other's discriminative vocabulary. Reuse the one lexical scorer
+        # instead of retaining a second Jaccard implementation.
+        lexical = min(lexical_coverage(words[left], words[right], idf),
+                      lexical_coverage(words[right], words[left], idf))
         matched_by = []
         if embedding is not None and embedding >= embedding_threshold:
             matched_by.append("embedding")
@@ -180,7 +193,7 @@ def main():
     if not memory.is_dir():
         raise SystemExit(f"STOP: no memory directory at {memory}")
 
-    signals, exempt, template = load_config(vault)
+    signals, exempt, excluded, template = load_config(vault)
     hits = []
     if "recurrence" in signals:
         thresholds = signals["recurrence"]
@@ -188,7 +201,8 @@ def main():
             raise SystemExit("STOP: recurrence needs positive embedding and lexical "
                              "thresholds in Candidate Selection.md")
         hits += signal_recurrence(vault, exempt, thresholds[0], thresholds[1],
-                                  refresh_index=not args.no_refresh)
+                                  refresh_index=not args.no_refresh,
+                                  excluded=excluded)
     if "hub-stub" in signals:
         a, b = signals["hub-stub"][:2]
         hits += signal_hub_stub(vault, int(a), int(b))
@@ -197,13 +211,15 @@ def main():
 
     if args.json:
         print(json.dumps({"signals": list(signals), "exempt": sorted(exempt),
+                          "excluded_folders": sorted(excluded),
                           "template": template, "candidates": hits[:args.limit]},
                          indent=2, ensure_ascii=False))
         return 0
 
     print(f"Candidates from {memory}")
     print(f"  signals: {', '.join(signals) or 'none enabled'}")
-    print(f"  exempt:  {', '.join(sorted(exempt)) or 'none'}\n")
+    print(f"  exempt:  {', '.join(sorted(exempt)) or 'none'}")
+    print(f"  excluded folders: {', '.join(sorted(excluded)) or 'none'}\n")
     if not hits:
         print("  no candidates above the configured thresholds")
     for hit in hits[:args.limit]:

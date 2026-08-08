@@ -41,6 +41,21 @@ def check_active_note(label, path):
           f"status: {fields.get('status')!r}")
 
 
+def terminal_proposals(directory):
+    """Proposal files whose own status says their decision is already closed."""
+    terminal = {"completed", "rejected", "superseded", "withdrawn", "cancelled"}
+    closed = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.md")):
+            if path.name.lower() == "readme.md":
+                continue
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
+            status = str(frontmatter_fields(text).get("status", "")).casefold()
+            if status in terminal:
+                closed.append(path.name)
+    return closed
+
+
 def validate_vault(vault):
     base = vault / "memory" / "perspirator"
     print("\nCanonical runtime")
@@ -59,6 +74,10 @@ def validate_vault(vault):
 
     for name in ("proposals", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())
+
+    closed = terminal_proposals(base / "proposals")
+    check("no terminal proposal remains in the active proposal queue", not closed,
+          "delete incorporated decisions: " + ", ".join(closed) if closed else "")
 
     runs = base / "runs"
     writable = False

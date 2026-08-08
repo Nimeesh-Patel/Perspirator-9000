@@ -30,7 +30,7 @@ Output (JSON array), one object per problem note:
       "stub":     true|false   # true if the conjecture side is empty
     }
 
-No third-party dependencies. Reuses split_note() from problem_half.py,
+No third-party dependencies. Reuses parse_note() from problem_half.py,
 which must sit in the same directory.
 """
 
@@ -39,9 +39,9 @@ import sys
 from pathlib import Path
 
 # One structural parser for the whole toolkit; see note_chunks.py. The `***`
-# contract itself stays owned by problem_half.split_note().
+# contract itself stays owned by problem_half.parse_note().
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from problem_half import split_note  # noqa: E402
+from problem_half import parse_note  # noqa: E402
 from note_chunks import (MEMORY_FOLDER, NON_NOTE_FOLDERS, body_offset,  # noqa: E402
                          extract_links, parse_frontmatter)
 
@@ -49,8 +49,9 @@ from note_chunks import (MEMORY_FOLDER, NON_NOTE_FOLDERS, body_offset,  # noqa: 
 def index_note(path: Path, vault_root: Path):
     """Return an index record for a problem note, or None if not one."""
     text = path.read_text(encoding="utf-8-sig", errors="replace")
-    frontmatter, problem_side, has_sep = split_note(text)
-    if not has_sep:
+    parsed = parse_note(text)
+    frontmatter, problem_side = parsed["frontmatter"], parsed["problem"]
+    if not parsed["has_separator"]:
         return None  # not a problem note
 
     category, up = parse_frontmatter(frontmatter or "")
