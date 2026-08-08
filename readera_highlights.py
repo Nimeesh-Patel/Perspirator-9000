@@ -29,6 +29,8 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from contracts import provider_result, source_record, status_for
+
 LIBRARY_ENTRY = "library.json"
 META_ENTRY = "meta.json"
 SELECTED_PASSAGE = 3
@@ -151,21 +153,19 @@ def compact_citation(citation, book):
     annotation = citation.get("note_extra")
     annotation = annotation.strip() if isinstance(annotation, str) else ""
 
-    return {
-        "id": uri,
-        "locator": f"{SCHEME}://{book['doc_sha1']}/{uri}",
-        "text": source_text(body, annotation),
-        "quote": body.strip(),
-        "annotation": annotation,
-        "has_annotation": bool(annotation),
-        "book": {k: v for k, v in book.items() if k != "backup"},
-        "page": citation.get("note_page"),
-        "position": citation.get("note_index"),
-        "mark": citation.get("note_mark"),
-        "created": timestamp(citation.get("note_insert_time")),
-        "modified": timestamp(citation.get("note_modified_time")),
-        "backup": book["backup"],
-    }
+    return source_record(
+        uri, source_text(body, annotation),
+        f"{SCHEME}://{book['doc_sha1']}/{uri}", provider="readera",
+        provenance={"provider": "readera", "backup": book["backup"]},
+        quote=body.strip(), annotation=annotation,
+        has_annotation=bool(annotation),
+        book={k: v for k, v in book.items() if k != "backup"},
+        page=citation.get("note_page"), position=citation.get("note_index"),
+        mark=citation.get("note_mark"),
+        created=timestamp(citation.get("note_insert_time")),
+        modified=timestamp(citation.get("note_modified_time")),
+        backup=book["backup"],
+    )
 
 
 def collect(paths):
@@ -231,8 +231,9 @@ def collect(paths):
     for backup in backups:
         del backup["_order"]
     for record in records.values():
-        record["withdrawn"] = bool(
+        withdrawn = bool(
             newest and newest["path"] not in seen_in.get(record["id"], set()))
+        record["withdrawal_state"] = "withdrawn" if withdrawn else "active"
 
     ordered = sorted(
         records.values(),
@@ -244,7 +245,7 @@ def collect(paths):
 
 def filtered(records, book=None, annotated_only=False, include_withdrawn=False):
     if not include_withdrawn:
-        records = [r for r in records if not r["withdrawn"]]
+        records = [r for r in records if r["withdrawal_state"] == "active"]
     if book:
         needle = book.casefold()
         records = [r for r in records if needle in r["book"]["title"].casefold()]
@@ -255,27 +256,29 @@ def filtered(records, book=None, annotated_only=False, include_withdrawn=False):
 
 def build_result(paths, book=None, annotated_only=False, include_withdrawn=False):
     records, errors, backups, newest = collect(paths)
-    withdrawn = [r for r in records if r["withdrawn"]]
+    withdrawn = [r for r in records if r["withdrawal_state"] == "withdrawn"]
     records = filtered(records, book=book, annotated_only=annotated_only,
                        include_withdrawn=include_withdrawn)
     titles = {r["book"]["title"] for r in records}
-    return {
-        "backups": backups,
-        "current_backup": newest["path"] if newest else None,
-        "books": len(titles),
-        "highlights": len(records),
-        "annotated": sum(1 for r in records if r["has_annotation"]),
-        "recovered_titles_from_filename": sorted(
+    return provider_result(
+        "readera", "recover highlights", status_for(records, errors),
+        scope={"backups": len(backups), "books": len(titles)},
+        freshness={"current_backup": newest["path"] if newest else None,
+                   "created": newest["created"] if newest else None},
+        records=records, errors=errors,
+        backups=backups,
+        current_backup=newest["path"] if newest else None,
+        books=len(titles), highlights=len(records),
+        annotated=sum(1 for r in records if r["has_annotation"]),
+        recovered_titles_from_filename=sorted(
             {r["book"]["title"] for r in records
              if r["book"]["title_source"] == "filename"}),
-        "withdrawn": [
+        withdrawn=[
             {"id": r["id"], "book": r["book"]["title"], "page": r["page"],
              "annotated": r["has_annotation"]}
             for r in withdrawn
         ],
-        "records": records,
-        "errors": errors,
-    }
+    )
 
 
 def arguments():

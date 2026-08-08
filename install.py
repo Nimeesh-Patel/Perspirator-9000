@@ -15,6 +15,7 @@ from pathlib import Path
 
 from adapters import (ADAPTERS, SCRIPT_NAMES, absolute, parse_target, render,
                       selected_keys)
+from installation import retire_stale_owned_files, write_manifest
 
 
 def target_type(value):
@@ -76,13 +77,18 @@ def main():
     template = (repo / "SKILL.md").read_text(encoding="utf-8")
     for key, directory in jobs:
         directory.mkdir(parents=True, exist_ok=True)
+        desired = [*SCRIPT_NAMES, ADAPTERS[key]["filename"]]
+        retired = retire_stale_owned_files(directory, desired)
         for script in SCRIPT_NAMES:
             shutil.copyfile(repo / script, directory / script)
         adapter = directory / ADAPTERS[key]["filename"]
         adapter.write_text(render(template, vault, directory),
                            encoding="utf-8", newline="\n")
+        write_manifest(directory, desired)
+        if retired:
+            print(f"  retired owned files: {', '.join(retired)}")
 
-    print("Installed without removing any existing unrelated files.")
+    print("Installed; unrelated files and modified retired outputs were not removed.")
     doctor = repo / "doctor.py"
     flags = {"ClaudeCode": "--claude-dir", "Codex": "--codex-dir",
              "Custom": "--custom-dir"}

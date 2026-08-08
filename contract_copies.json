@@ -1,0 +1,12 @@
+{
+  "contracts": [
+    {
+      "name": "Problem Note structure",
+      "canonical": "fixtures/problem_note_conformance.json",
+      "copies": [
+        "{home}/people/test/fixtures/problem_note_conformance.json",
+        "{home}/Problem Notes/fixtures/problem_note_conformance.json"
+      ]
+    }
+  ]
+}

@@ -12,8 +12,12 @@ import x_posts
 
 
 SOURCES = [
-    {"id": "a", "text": "First exact idea.", "url": "https://example.com/a"},
-    {"id": "b", "text": "A conflicting idea.", "url": "https://example.com/b"},
+    {"id": "a", "text": "First exact idea.",
+     "locator": "https://example.com/a", "provenance": {"provider": "test"},
+     "completeness": "complete", "withdrawal_state": "active"},
+    {"id": "b", "text": "A conflicting idea.",
+     "locator": "https://example.com/b", "provenance": {"provider": "test"},
+     "completeness": "complete", "withdrawal_state": "active"},
 ]
 
 
@@ -414,9 +418,12 @@ class ReadEraAdapterTests(unittest.TestCase):
             ["Camiller Patrick", "Popper Karl"])
 
     def test_locator_generalises_beyond_http_and_must_be_unique(self):
+        shared = {"provenance": {"provider": "test"},
+                  "completeness": "complete", "withdrawal_state": "active"}
         book = {"id": "u1", "text": "A highlight.",
-                "locator": "readera://sha-a/u1"}
-        web = {"id": "x1", "text": "A post.", "url": "https://x.com/a/status/1"}
+                "locator": "readera://sha-a/u1", **shared}
+        web = {"id": "x1", "text": "A post.",
+               "locator": "https://x.com/a/status/1", **shared}
         parsed = stn.source_records([book, web])
         self.assertEqual(parsed["u1"]["locator"], "readera://sha-a/u1")
         self.assertEqual(parsed["x1"]["locator"], "https://x.com/a/status/1")
@@ -425,6 +432,9 @@ class ReadEraAdapterTests(unittest.TestCase):
             stn.source_records([{"id": "b", "text": "t", "locator": "not-a-uri"}])
         with self.assertRaises(ValueError):
             stn.source_records([book, dict(book, id="u2")])
+        with self.assertRaisesRegex(ValueError, "retired 'url'"):
+            stn.source_records([dict(web, locator=None,
+                                     url="https://x.com/a/status/1")])
 
 
     def test_deletion_in_readera_is_reported_and_excluded_by_default(self):
@@ -456,11 +466,15 @@ class ReadEraAdapterTests(unittest.TestCase):
 class HighlightsToNotesTests(unittest.TestCase):
     @staticmethod
     def bundle(records):
-        return {"records": records}
+        return {"provider": "readera", "capability": "recover highlights",
+                "status": "complete", "scope": {}, "freshness": {},
+                "records": records, "errors": []}
 
     @staticmethod
     def highlight(uid, text, title="A Book", authors=("An Author",), page=1):
         return {"id": uid, "text": text, "locator": f"readera://sha/{uid}",
+                "provenance": {"provider": "readera"},
+                "completeness": "complete", "withdrawal_state": "active",
                 "page": page, "created": "2026-01-02T03:04:05+00:00",
                 "book": {"title": title, "authors": list(authors),
                          "title_source": "metadata"}}

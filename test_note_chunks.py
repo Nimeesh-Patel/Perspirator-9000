@@ -91,6 +91,20 @@ def main():
               == parsed["problem"]
               and parsed["normalized"][parsed["conjecture_start"]:parsed["conjecture_end"]]
               == parsed["conjecture"])
+        fixture_path = Path(__file__).parent / "fixtures" / "problem_note_conformance.json"
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        conforming = []
+        for case in fixture["cases"]:
+            value = parse_note(case["text"])
+            conforming.append(
+                value["has_separator"] == case["has_separator"]
+                and value["problem"] == case["problem"]
+                and value["conjecture"] == case["conjecture"]
+                and bool(value["problem"] and value["conjecture"])
+                == case["reviewable"])
+        check("Python parser conforms to shared Problem Note fixtures",
+              all(conforming), str([fixture["cases"][i]["name"]
+                                    for i, ok in enumerate(conforming) if not ok]))
         units = nc.chunks_for_note(p_problem, root)
         check("short Problem Note has exactly two units", len(units) == 2, str(len(units)))
         check("problem identity is complete",
@@ -222,8 +236,15 @@ zeta eta theta iota kappa.
         build(root, "memory/perspirator/proposals/done.md",
               "---\nstatus: completed\n---\n")
         build(root, "memory/perspirator/proposals/README.md", "# Proposals\n")
-        check("terminal proposals are surfaced for deletion",
-              doctor.terminal_proposals(proposals) == ["done.md"])
+        check("terminal proposals are surfaced by the general lifecycle check",
+              doctor.lifecycle_problems(root, [{
+                  "name": "proposals", "role": "proposal",
+                  "path": "memory/perspirator/proposals",
+                  "validation": "frontmatter-state",
+                  "state_field": "status",
+                  "forbidden_states": ["completed"],
+                  "retire_when": "the decision is terminal",
+              }]) == ["proposals: done.md is terminal (status: completed)"])
 
         build(root, "memory/policies/Policy Loader.md", """---
 title: Policy Loader
@@ -233,7 +254,7 @@ status: active
 configuration only
 """)
         policy = build(root, "memory/policies/Explanatory.md", """---
-title: Explanatory Implementation
+title: Criticisable Implementation
 type: policy
 status: active
 ---
@@ -243,7 +264,7 @@ How should a mechanism vary?
 
 ## Conjecture
 
-Prefer an explanatory implementation.
+Keep implementation criticisable.
 """)
         build(root, "memory/policies/Draft.md", """---
 title: Draft
@@ -253,11 +274,11 @@ status: draft
 """)
         surface = pi.active_policy_surface(root)
         check("policy surface contains active policies but not configuration/drafts",
-              surface == [{"title": "Explanatory Implementation",
+              surface == [{"title": "Criticisable Implementation",
                            "path": "memory/policies/Explanatory.md",
                            "problem": "How should a mechanism vary?"}], str(surface))
         policy.write_text(policy.read_text(encoding="utf-8").replace(
-            "## Conjecture\n\nPrefer an explanatory implementation.\n", ""), encoding="utf-8")
+            "## Conjecture\n\nKeep implementation criticisable.\n", ""), encoding="utf-8")
         try:
             pi.active_policy_surface(root)
             check("malformed active policy is refused", False, "no ValueError")

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """File reading highlights into the vault note for the book they came from.
 
-Consumes a `readera_highlights.py` bundle and appends each new highlight to its
-book's `collection: Books` note, creating the note when the book has none. It
-never rewrites an existing byte: a highlight already anchored in the vault is
-skipped, and new blocks are appended inside the highlights section.
+Consumes a `readera_highlights.py` bundle and files each new highlight in its
+book's `collection: Books` note, creating the note when the book has none. A
+highlight already anchored in the vault is skipped. Existing notes are changed
+through a guarded whole-file transaction which preserves content outside the
+declared insertion and refuses a stale pre-state.
 
 Book identity is resolved mechanically and reported, never guessed:
 
@@ -32,6 +33,9 @@ import sys
 from collections import OrderedDict
 from pathlib import Path
 
+from change_transaction import apply_writes, file_state, write_operation
+from contracts import validate_provider_result, validate_source_record
+
 SECTION = "## Highlights (ReadEra)"
 ANCHOR = "^re{}"
 COLLECTION_LINE = re.compile(r"^collection:\s*Books\s*$", re.MULTILINE)
@@ -56,10 +60,13 @@ def read_bundle(path):
         payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read bundle {path}: {exc}") from exc
-    records = payload.get("records") if isinstance(payload, dict) else payload
+    if not isinstance(payload, dict):
+        raise ValueError("ReadEra bundle must carry a provider result")
+    validate_provider_result(payload)
+    records = payload.get("records")
     if not isinstance(records, list) or not records:
         raise ValueError("bundle has no records")
-    return records
+    return [validate_source_record(record) for record in records]
 
 
 def book_notes(vault):
@@ -220,7 +227,7 @@ def plan(records, vault):
 
 
 def apply(actions, vault, destination):
-    written = []
+    operations, written = [], []
     for action in actions:
         if not action["new"]:
             continue
@@ -231,16 +238,27 @@ def apply(actions, vault, destination):
             if source.exists() or target.exists():
                 raise ValueError(f"refusing to overwrite: {action['note']}")
             body = new_note(action["title"], action["new"])
+            before = file_state(target, include_bytes=True)
         else:
             if not source.is_file():
                 raise ValueError(f"resolved note vanished: {action['note']}")
+            source_before = file_state(source, include_bytes=True)
             body = append_into_section(
                 source.read_text(encoding="utf-8-sig"), action["new"])
             if destination != vault and target.exists():
                 raise ValueError(f"refusing to overwrite staged note: {target}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8", newline="\n")
+            before = (source_before if destination == vault
+                      else file_state(target, include_bytes=True))
+        payload = body.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+        operations.append(write_operation(
+            target, payload, before=before,
+            reason=("create book note" if action["how"] == "create"
+                    else "file new highlights into their canonical book note")))
         written.append(str(target))
+    outcome = apply_writes(operations)
+    if outcome["status"] != "applied":
+        retry = "; do not retry before inspecting state" if outcome.get("do_not_retry") else ""
+        raise RuntimeError(f"filesystem transaction {outcome['status']}{retry}: {outcome}")
     return written
 
 
@@ -267,7 +285,7 @@ def main():
         destination = vault if args.write else Path(args.stage).expanduser().resolve(
             strict=False)
         written = apply(actions, vault, destination)
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         raise SystemExit(f"error: {exc}") from None
 
     print(json.dumps({

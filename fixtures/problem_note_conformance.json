@@ -1,0 +1,84 @@
+{
+  "contract": "problem-note-structure",
+  "version": 1,
+  "invariants": [
+    "optional opening YAML frontmatter is excluded from the problem side",
+    "the first line equal to *** outside a triple-backtick fence is the boundary",
+    "a separator may exist while either side is empty",
+    "a note is reviewable only when both sides are non-empty"
+  ],
+  "cases": [
+    {
+      "name": "ordinary",
+      "text": "What is wrong?\n***\nA conjecture.\n",
+      "has_separator": true,
+      "problem": "What is wrong?",
+      "conjecture": "A conjecture.",
+      "reviewable": true
+    },
+    {
+      "name": "frontmatter",
+      "text": "---\ncategory: Default\n---\n\nA problem.\n\n***\n\nAn answer.\n",
+      "has_separator": true,
+      "problem": "A problem.",
+      "conjecture": "An answer.",
+      "reviewable": true
+    },
+    {
+      "name": "no separator",
+      "text": "Only ordinary prose.",
+      "has_separator": false,
+      "problem": null,
+      "conjecture": null,
+      "reviewable": false
+    },
+    {
+      "name": "empty problem",
+      "text": "\n***\nAn answer.",
+      "has_separator": true,
+      "problem": "",
+      "conjecture": "An answer.",
+      "reviewable": false
+    },
+    {
+      "name": "empty conjecture",
+      "text": "A problem.\n***\n",
+      "has_separator": true,
+      "problem": "A problem.",
+      "conjecture": "",
+      "reviewable": false
+    },
+    {
+      "name": "fenced marker is prose",
+      "text": "A problem with an example.\n```text\n***\n```\nNo boundary here.",
+      "has_separator": false,
+      "problem": null,
+      "conjecture": null,
+      "reviewable": false
+    },
+    {
+      "name": "first authored separator wins",
+      "text": "Problem.\n***\nFirst answer.\n***\nSecond marker stays in the answer.",
+      "has_separator": true,
+      "problem": "Problem.",
+      "conjecture": "First answer.\n***\nSecond marker stays in the answer.",
+      "reviewable": true
+    },
+    {
+      "name": "four stars are not the convention",
+      "text": "Problem.\n****\nNot a boundary.",
+      "has_separator": false,
+      "problem": null,
+      "conjecture": null,
+      "reviewable": false
+    },
+    {
+      "name": "crlf normalizes",
+      "text": "Problem.\r\n***\r\nAnswer.\r\n",
+      "has_separator": true,
+      "problem": "Problem.",
+      "conjecture": "Answer.",
+      "reviewable": true
+    }
+  ]
+}

@@ -23,6 +23,9 @@ def check(label, ok, detail=""):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from note_chunks import frontmatter_fields  # noqa: E402,F401
 from policy_index import active_policy_surface  # noqa: E402
+from artifact_lifecycle import lifecycle_problems, load_lifecycle  # noqa: E402
+from contract_copy import validate_contract_copies  # noqa: E402
+from installation import manifest_problems  # noqa: E402
 
 
 def normalized_adapter(text, vault, tools_dir):
@@ -39,21 +42,6 @@ def check_active_note(label, path):
     fields = frontmatter_fields(path.read_text(encoding="utf-8-sig", errors="replace"))
     check(f"{label} status is active", fields.get("status") == "active",
           f"status: {fields.get('status')!r}")
-
-
-def terminal_proposals(directory):
-    """Proposal files whose own status says their decision is already closed."""
-    terminal = {"completed", "rejected", "superseded", "withdrawn", "cancelled"}
-    closed = []
-    if directory.is_dir():
-        for path in sorted(directory.glob("*.md")):
-            if path.name.lower() == "readme.md":
-                continue
-            text = path.read_text(encoding="utf-8-sig", errors="replace")
-            status = str(frontmatter_fields(text).get("status", "")).casefold()
-            if status in terminal:
-                closed.append(path.name)
-    return closed
 
 
 def validate_vault(vault):
@@ -75,9 +63,15 @@ def validate_vault(vault):
     for name in ("proposals", "runs"):
         check(f"runtime directory exists: {name}", (base / name).is_dir())
 
-    closed = terminal_proposals(base / "proposals")
-    check("no terminal proposal remains in the active proposal queue", not closed,
-          "delete incorporated decisions: " + ", ".join(closed) if closed else "")
+    try:
+        lifecycle = load_lifecycle(vault)
+        problems = lifecycle_problems(vault, lifecycle)
+        check("artifact lifecycle declaration is well formed", True,
+              f"{len(lifecycle)} roles")
+        check("declared artifact lifecycles have no mechanical violation",
+              not problems, "; ".join(problems[:4]))
+    except ValueError as exc:
+        check("artifact lifecycle declaration is well formed", False, str(exc))
 
     runs = base / "runs"
     writable = False
@@ -164,6 +158,9 @@ def validate_shared_scripts(source_dir):
     unlisted = sorted(present - set(SCRIPT_NAMES))
     check("every source script is listed for install", not unlisted,
           "unlisted, so never installed: " + ", ".join(unlisted) if unlisted else "")
+    copy_problems = validate_contract_copies(source_dir)
+    check("generated contract fixtures match their canonical source",
+          not copy_problems, "; ".join(copy_problems))
 
 
 def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
@@ -190,15 +187,10 @@ def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
             check(f"installed script matches shared source: {script}",
                   installed.read_bytes() == source.read_bytes())
 
-    # The invariant is that the installed toolkit *equals* the repository
-    # toolkit. Checking only that listed scripts arrived leaves the other
-    # direction unguarded: install.py deliberately never removes files, so a
-    # retired script stays installed and an agent can still route work to it.
-    orphans = sorted(path.name for path in tools_dir.glob("*.py")
-                     if path.name not in SCRIPT_NAMES)
-    check("no retired script is still installed", not orphans,
-          "installed but no longer shared: " + ", ".join(orphans)
-          if orphans else "")
+    desired = [*SCRIPT_NAMES, ADAPTERS[key]["filename"]]
+    ownership_problems = manifest_problems(tools_dir, desired)
+    check("generated-file ownership is current", not ownership_problems,
+          "; ".join(ownership_problems))
 
     if template is not None:
         check("render matches canonical bootstrap source exactly",

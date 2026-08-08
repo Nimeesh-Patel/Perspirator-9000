@@ -12,7 +12,8 @@ SCRIPT_NAMES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
                 "policy_index.py", "note_rename.py", "anki_query.py",
                 "source_to_notes.py", "x_posts.py", "readera_highlights.py",
                 "highlights_to_notes.py", "video_sources.py", "evaluate_retrieval.py",
-                "doctor.py", "adapters.py")
+                "change_transaction.py", "contracts.py", "artifact_lifecycle.py",
+                "contract_copy.py", "installation.py", "doctor.py", "adapters.py")
 
 ADAPTERS = {
     "ClaudeCode": {

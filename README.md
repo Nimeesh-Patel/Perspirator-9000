@@ -142,13 +142,13 @@ retrieval. Embedding and lexical scores nominate notes to inspect; they do not
 establish identity, relevance, placement, criticism, redundancy, or truth.
 
 ```text
-external source URLs -> source adapter -> {id, text, url} bundle
-                                             |
-                         agent + neighbours -> explanatory grouping plan
-                                             |
-                                             v
-                                  source_to_notes.py
-                                  staged new or patched existing notes
+external sources -> platform adapter -> source records + provider result
+                                           |
+                       agent + neighbours -> explanatory grouping plan
+                                           |
+                                           v
+                                source_to_notes.py
+                                guarded filesystem transaction
 ```
 
 `policy_index.py` performs the analogous structural job for policy: it exposes
@@ -159,8 +159,10 @@ reads those policies in full.
 Source adapters recover facts only. `x_posts.py` is one adapter, not the
 architecture. `source_to_notes.py` checks a plan's mechanical consequences:
 coverage, unique assignment, resolvable and YAML-safe `up:` links, ordinary
-Problem Note structure, and exact source text and URLs. Existing-note appends
-remain explicit, staged, stale-checked, and append-only. The agent—not a
+Problem Note structure, and exact source text and locators. Each source record
+states identity, provenance, completeness, and withdrawal state; every provider
+states complete, partial, unavailable, stale, or indeterminate scope. Existing-note
+appends remain explicit, staged, stale-checked, and append-only. The agent—not a
 neighbour score—remains responsible for explanatory identity, grouping,
 relations, and conflicts.
 
@@ -173,6 +175,7 @@ relations, and conflicts.
 | `memory/policies/*.md` | Criticisable semantic and write policies |
 | `memory/perspirator/Candidate Selection.md` | Candidate signals, thresholds, exemptions, draft form |
 | `memory/perspirator/Neighbour Retrieval.md` | Embedding model, indexed areas, exemptions, index location |
+| `memory/perspirator/artifact-lifecycle.json` | Editable roles and retirement conditions for temporary/generated artifacts |
 | `memory/perspirator/runs/README.md` | Inspectable run-report contract |
 
 ## Repository tools
@@ -190,6 +193,14 @@ relations, and conflicts.
 - `obsidian_cli.py` provides bounded read-only Obsidian search, graph,
   properties, Bases, and vault-shape context.
 - `note_rename.py` owns the guarded Obsidian note-identity transaction.
+- `change_transaction.py` owns hashes, file preconditions, observed outcomes,
+  rollback metadata, and guarded writes shared by mutation adapters.
+- `contracts.py` owns the minimal source-record and provider-result boundaries;
+  adapters preserve their platform-specific extension fields.
+- `artifact_lifecycle.py` applies mechanically decidable checks from the
+  editable lifecycle declaration without deciding semantic retention value.
+- `.perspirator-install.json` records generated-file ownership in each target;
+  later installs remove an unchanged retired output but refuse a modified one.
 - `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.

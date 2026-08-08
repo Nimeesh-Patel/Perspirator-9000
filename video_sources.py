@@ -3,7 +3,7 @@
 
 A spoken passage has no natural boundary and no page number, so the source
 fact it needs is *when*. This adapts a caption track into the same
-source-neutral ``{id, text, url}`` contract as `x_posts.py`, with the url
+source-neutral source-record contract as `x_posts.py`, with the locator
 carrying a second offset, so a passage stays re-hearable in its own context.
 
 The caption file is fetched outside this tool, which stays stdlib-only:
@@ -25,6 +25,8 @@ import re
 import sys
 from difflib import SequenceMatcher
 from pathlib import Path
+
+from contracts import provider_result, source_record, status_for
 
 CUE_RE = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d\d\d)\s*-->")
 INLINE_RE = re.compile(r"<(\d\d):(\d\d):(\d\d)\.(\d\d\d)>")
@@ -124,16 +126,17 @@ def anchor(vtt_text, passages, url, probe_words=8, minimum=0.75):
             unplaced.append({"passage": passage[:120], "best_match": round(score, 2)})
             continue
         offset = int(words[start][0])
-        located.append({
-            "id": f"{ident}-{offset}",
-            "text": passage,
-            "url": f"https://youtu.be/{ident}?t={offset}",
-            "seconds": offset,
-            "exact": score == 1.0,
-            "order": index,
-        })
-    return {"video": ident, "words": len(words),
-            "sources": located, "unplaced": unplaced}
+        located.append(source_record(
+            f"{ident}-{offset}", passage,
+            f"https://youtu.be/{ident}?t={offset}", provider="video-captions",
+            provenance={"provider": "video-captions", "video": ident},
+            seconds=offset, exact=score == 1.0, order=index))
+    return provider_result(
+        "video-captions", "anchor authored passages",
+        status_for(located, [], incomplete=bool(unplaced)),
+        scope={"video": ident, "passages": len(passages)},
+        freshness={"basis": "supplied caption file"},
+        records=located, errors=[], words=len(words), unplaced=unplaced)
 
 
 def main():
@@ -158,17 +161,17 @@ def main():
 
     if args.out:
         Path(args.out).write_text(
-            json.dumps(report["sources"], ensure_ascii=False, indent=1),
+            json.dumps(report, ensure_ascii=False, indent=1),
             encoding="utf-8")
-    exact = sum(1 for item in report["sources"] if item["exact"])
-    print(f"{len(report['sources'])} anchored ({exact} exact), "
+    exact = sum(1 for item in report["records"] if item["exact"])
+    print(f"{len(report['records'])} anchored ({exact} exact), "
           f"{len(report['unplaced'])} unplaced, "
           f"from {report['words']} timed words", file=sys.stderr)
     for item in report["unplaced"]:
         print(f"  UNPLACED (best {item['best_match']}): {item['passage']}",
               file=sys.stderr)
     if not args.out:
-        print(json.dumps(report["sources"], ensure_ascii=False, indent=1))
+        print(json.dumps(report, ensure_ascii=False, indent=1))
     return 0
 
 

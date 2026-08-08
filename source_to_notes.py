@@ -6,13 +6,13 @@ plan; this tool checks the mechanical boundary between them. It guarantees
 coverage, prevents a source from being assigned twice, validates parent links,
 renders ordinary `***` Problem Notes, and permits an explicit, guarded append
 when an agent has judged that a source addresses an existing note's same
-problem. Existing bytes are preserved; only exact source text and URL are
+problem. Existing bytes are preserved; only exact source text and locator are
 appended.
 
 The source bundle may be a JSON list or an object whose `sources` or `records`
-field is a list. Every source needs `id`, `text`, and a `locator` URI saying
+field is a list. Every source needs stable `id`, exact `text`, and a `locator` URI saying
 where it lives — `https://...` for a web source, `readera://...` for a book
-highlight. `url` remains accepted as the name of an http locator.
+highlight. Records also state provenance, completeness, and withdrawal state.
 
 Plan shape:
     {
@@ -42,7 +42,6 @@ Examples:
 """
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -50,6 +49,9 @@ from pathlib import Path
 
 from note_chunks import MEMORY_FOLDER, NON_NOTE_FOLDERS
 from problem_half import parse_note
+from change_transaction import (apply_writes, file_state, sha256_bytes,
+                                write_operation)
+from contracts import validate_provider_result, validate_source_record
 
 
 INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -59,12 +61,6 @@ INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 # scoping choice.
 EXCLUDED_PARTS = {*NON_NOTE_FOLDERS, MEMORY_FOLDER}
 SEPARATOR = re.compile(r"^\*\*\*\s*$", re.MULTILINE)
-# A locator says where a source lives and is also the duplicate guard, so it
-# must be a stable, textually unique reference. `https` is one URI scheme among
-# several: a book highlight has no web address but does have `readera://...`.
-LOCATOR = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+$", re.IGNORECASE)
-
-
 def read_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -76,6 +72,8 @@ def source_records(payload):
     if isinstance(payload, list):
         records = payload
     elif isinstance(payload, dict):
+        if "provider" in payload or "status" in payload:
+            validate_provider_result(payload)
         records = payload.get("sources", payload.get("records"))
     else:
         records = None
@@ -87,15 +85,12 @@ def source_records(payload):
     for index, record in enumerate(records):
         if not isinstance(record, dict):
             raise ValueError(f"source {index} is not an object")
-        source_id = str(record.get("id", "")).strip()
-        text = record.get("text")
-        locator = record.get("locator", record.get("url"))
-        if not source_id or not isinstance(text, str) or not text.strip():
-            raise ValueError(f"source {index} needs non-empty id and text")
-        if not isinstance(locator, str) or not LOCATOR.match(locator.strip()):
-            raise ValueError(
-                f"source {source_id} needs a locator URI (scheme://reference)")
-        locator = locator.strip()
+        try:
+            record = validate_source_record(record)
+        except ValueError as exc:
+            raise ValueError(f"source {index}: {exc}") from exc
+        source_id = record["id"].strip()
+        locator = record["locator"].strip()
         if source_id in by_id:
             raise ValueError(f"duplicate source id in bundle: {source_id}")
         if locator in seen_locators:
@@ -103,8 +98,8 @@ def source_records(payload):
                 f"sources {seen_locators[locator]} and {source_id} share "
                 f"locator {locator}")
         seen_locators[locator] = source_id
-        by_id[source_id] = {"id": source_id, "text": text.strip(),
-                            "locator": locator}
+        by_id[source_id] = dict(record, id=source_id,
+                               text=record["text"].strip(), locator=locator)
     return by_id
 
 
@@ -213,7 +208,7 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
             if current_problem != problem:
                 raise ValueError(
                     f"{filename}: planned problem does not exactly match current problem side")
-            expected_sha256 = hashlib.sha256(raw).hexdigest()
+            expected_sha256 = sha256_bytes(raw)
             category = None
             parents = []
         else:
@@ -315,12 +310,10 @@ def append_suffix(raw, note, sources):
 def write_notes(notes, sources, destination, vault=None, append_existing=False):
     destination = Path(destination)
     vault = Path(vault) if vault is not None else None
-    destination.mkdir(parents=True, exist_ok=True)
     live_write = vault is not None and destination.resolve() == vault.resolve()
 
-    actions = []
+    operations = []
     targets = []
-    collisions = []
     for note in notes:
         filename = note["filename"]
         if note.get("existing"):
@@ -328,7 +321,7 @@ def write_notes(notes, sources, destination, vault=None, append_existing=False):
                 raise ValueError(f"{filename}: staging an existing note requires vault")
             source_path = vault / filename
             raw, _, _ = read_existing(source_path)
-            digest = hashlib.sha256(raw).hexdigest()
+            digest = sha256_bytes(raw)
             if digest != note.get("expected_sha256"):
                 raise ValueError(f"{filename}: existing target changed after validation")
             suffix = append_suffix(raw, note, sources)
@@ -338,28 +331,30 @@ def write_notes(notes, sources, destination, vault=None, append_existing=False):
                         "refusing existing-note append without --append-existing: "
                         + filename)
                 target = source_path
-                actions.append(("append", target, suffix))
+                before = file_state(target, include_bytes=True)
+                operations.append(write_operation(
+                    target, raw + suffix, before=before,
+                    reason="append exact sources to an approved same-problem note"))
             else:
                 target = destination / filename
                 if target.exists():
-                    collisions.append(str(target))
-                actions.append(("write", target, raw + suffix))
+                    raise ValueError(f"refusing to overwrite: {target}")
+                operations.append(write_operation(
+                    target, raw + suffix,
+                    reason="stage complete patched note for criticism"))
         else:
             target = destination / filename
             if target.exists():
-                collisions.append(str(target))
-            actions.append(("write", target, render_note(note, sources).encode("utf-8")))
+                raise ValueError(f"refusing to overwrite: {target}")
+            operations.append(write_operation(
+                target, render_note(note, sources).encode("utf-8"),
+                reason="create approved source-grounded Problem Note"))
         targets.append(target)
 
-    if collisions:
-        raise ValueError("refusing to overwrite: " + ", ".join(collisions))
-
-    for action, target, payload in actions:
-        if action == "append":
-            with target.open("ab") as handle:
-                handle.write(payload)
-        else:
-            target.write_bytes(payload)
+    outcome = apply_writes(operations)
+    if outcome["status"] != "applied":
+        retry = "; do not retry before inspecting state" if outcome.get("do_not_retry") else ""
+        raise RuntimeError(f"filesystem transaction {outcome['status']}{retry}: {outcome}")
     return targets
 
 
@@ -401,7 +396,7 @@ def main():
         targets = write_notes(
             notes, sources, destination, vault=vault,
             append_existing=args.append_existing)
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         raise SystemExit(f"error: {exc}") from None
 
     existing_count = sum(1 for note in notes if note["existing"])

@@ -25,6 +25,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from contracts import provider_result, source_record, status_for
+
 STATUS_RE = re.compile(
     r"https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/"
     r"(?:[A-Za-z0-9_]+|i)/status/(\d+)",
@@ -160,7 +162,7 @@ def article_from_payload(status_id, article_id, payload):
     return {
         "id": article_id,
         "title": html.unescape(title).strip(),
-        "url": f"https://x.com/i/article/{article_id}",
+        "locator": f"https://x.com/i/article/{article_id}",
         "text": "\n\n".join([html.unescape(title).strip(), *paragraphs]),
     }
 
@@ -214,18 +216,17 @@ def compact_post(post, note_fetcher=fetch_note_text,
             text = (article["text"] if post_text == match.group(0)
                     else f"{post_text}\n\n{article['text']}")
             text_source = "x_article_full"
-    return {
-        "id": status_id,
-        "url": canonical_url,
-        "author": {
+    return source_record(
+        status_id, text, canonical_url, provider="x",
+        provenance={"provider": "x", "representation": text_source},
+        author={
             "name": user.get("name"),
             "screen_name": screen_name,
         },
-        "created_at": post.get("created_at"),
-        "text": text,
-        "text_source": text_source,
-        "article": article,
-    }
+        created_at=post.get("created_at"),
+        text_source=text_source,
+        article=article,
+    )
 
 
 def compact_record(requested_id, post, note_fetcher=fetch_note_text,
@@ -244,7 +245,7 @@ def compact_record(requested_id, post, note_fetcher=fetch_note_text,
         "media": [
             {
                 "type": item.get("type"),
-                "url": item.get("media_url_https"),
+                "locator": item.get("media_url_https"),
                 "alt_text": item.get("ext_alt_text"),
             }
             for item in post.get("mediaDetails", [])
@@ -280,14 +281,17 @@ def build_result(input_ids, fetcher=fetch_json, note_fetcher=fetch_note_text,
                 article_fetcher=article_fetcher))
         except Exception as exc:  # one unavailable post must not hide the rest
             errors.append({"id": status_id, "error": str(exc)})
-    return {
-        "input_occurrences": len(input_ids),
-        "unique_status_ids": len(unique_ids),
-        "duplicate_status_ids": duplicate_ids,
-        "possible_duplicate_text_groups": repeated_text_groups(records),
-        "records": records,
-        "errors": errors,
-    }
+    return provider_result(
+        "x", "recover public posts", status_for(records, errors),
+        scope={"input_occurrences": len(input_ids),
+               "unique_status_ids": len(unique_ids)},
+        freshness={"basis": "live provider response"},
+        records=records, errors=errors,
+        input_occurrences=len(input_ids),
+        unique_status_ids=len(unique_ids),
+        duplicate_status_ids=duplicate_ids,
+        possible_duplicate_text_groups=repeated_text_groups(records),
+    )
 
 
 def arguments():

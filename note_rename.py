@@ -2,7 +2,6 @@
 """Guard one Obsidian rename as a complete vault identity transaction."""
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -11,6 +10,9 @@ from pathlib import Path, PurePosixPath
 
 from note_chunks import DEFAULT_EXCLUDES
 from obsidian_cli import ObsidianCLI
+from change_transaction import (identity_operation, observe_identity,
+                                public_identity, sha256_file,
+                                verify_identity_precondition)
 
 WIKILINK = re.compile(re.escape("[[") + r"([^]|#]+)(?:[#|][^]]*)?" + re.escape("]]"))
 
@@ -38,10 +40,6 @@ def note_files(vault):
     return sorted(path for path in vault.rglob("*.md")
                   if not any(part.casefold() in excluded
                              for part in path.relative_to(vault).parts))
-
-
-def sha256(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def backlinks(cli, path):
@@ -94,17 +92,21 @@ def build_plan(vault, old, new_name, executable="obsidian", timeout=10,
         raise RuntimeError(f"Obsidian unavailable: {probe['error']}")
     unique = Counter(path.stem.casefold()
                      for path in note_files(vault))[old.stem.casefold()] == 1
+    transaction = identity_operation(
+        old_file, new_file, reason="preserve note identity while updating backlinks")
     return {"vault": vault, "old": old.as_posix(), "new": new.as_posix(),
-            "new_name": new.stem, "sha256": sha256(old_file),
+            "new_name": new.stem, "sha256": sha256_file(old_file),
             "backlinks": backlinks(cli, old.as_posix()),
             "old_links": stale_links(vault, old, unique), "unique": unique,
-            "executable": executable, "timeout": timeout, "runner": runner}
+            "executable": executable, "timeout": timeout, "runner": runner,
+            "transaction": transaction}
 
 
 def public(plan, status="planned", **extra):
     result = {"status": status, "old": plan["old"], "new": plan["new"],
               "sha256": plan["sha256"], "backlinks": plan["backlinks"],
               "old_links": plan["old_links"],
+              "transaction": public_identity(plan["transaction"]),
               "resync_candidates": sorted(
                   set([plan["new"], *plan["backlinks"].keys()]))}
     result.update(extra)
@@ -115,8 +117,7 @@ def apply_plan(plan):
     vault = plan["vault"]
     old, new = PurePosixPath(plan["old"]), PurePosixPath(plan["new"])
     old_file, new_file = vault / old, vault / new
-    if (not old_file.is_file() or new_file.exists()
-            or sha256(old_file) != plan["sha256"]):
+    if not verify_identity_precondition(plan["transaction"]):
         raise RuntimeError("rename preconditions changed after planning")
     argv = [plan["executable"], f"vault={vault.name}", "rename",
             f"path={plan['old']}", f"name={plan['new_name']}"]
@@ -126,15 +127,15 @@ def apply_plan(plan):
             encoding="utf-8", errors="replace", timeout=plan["timeout"],
             shell=False)
     except subprocess.TimeoutExpired:
+        _, observed = observe_identity(plan["transaction"])
         return public(plan, "indeterminate", do_not_retry=True,
-                      observed={"old_exists": old_file.exists(),
-                                "new_exists": new_file.exists()},
+                      observed=observed,
                       error="Obsidian rename timed out; inspect state before any action")
     if completed.returncode != 0:
-        if new_file.exists() or not old_file.exists():
+        state, observed = observe_identity(plan["transaction"])
+        if state != "not-applied":
             return public(plan, "indeterminate", do_not_retry=True,
-                          observed={"old_exists": old_file.exists(),
-                                    "new_exists": new_file.exists()},
+                          observed=observed,
                           error=(completed.stderr or completed.stdout
                                  or f"Obsidian exit {completed.returncode}").strip())
         raise RuntimeError((completed.stderr or completed.stdout
@@ -142,7 +143,7 @@ def apply_plan(plan):
     failures = []
     if old_file.exists() or not new_file.is_file():
         failures.append("filesystem identity did not move exactly once")
-    elif sha256(new_file) != plan["sha256"]:
+    elif sha256_file(new_file) != plan["sha256"]:
         failures.append("note content changed during rename")
     remaining = stale_links(vault, old, plan["unique"])
     if remaining:

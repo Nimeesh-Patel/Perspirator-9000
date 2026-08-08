@@ -39,15 +39,18 @@ def parse_note(text: str):
     body = normalized[body_start:]
     separator = None
     pos = 0
+    in_fence = False
     for line in body.splitlines(keepends=True):
-        if line.rstrip("\n").strip() == "***":
+        stripped = line.rstrip("\n").strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            pos += len(line)
+            continue
+        if not in_fence and stripped == "***":
             separator = (body_start + pos,
                          body_start + pos + len(line.rstrip("\n")))
             break
         pos += len(line)
-    if separator is None and body.split("\n")[-1].strip() == "***":
-        start = len(normalized) - len(body.split("\n")[-1])
-        separator = (start, len(normalized))
 
     if separator is None:
         return {
