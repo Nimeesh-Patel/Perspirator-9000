@@ -205,6 +205,9 @@ relations, and conflicts.
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.
 - `anki_query.py` provides bounded read-only AnkiConnect facts without owning rendering.
+- `directory_audit.py` reports a read-only directory census, optional exact-byte
+  duplicate groups, and CRC-verified sibling ZIP/extraction relations without
+  deciding usefulness, supersession, or retention.
 - `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
   Note Tweets and attached X Articles when structurally present.
 - `readera_highlights.py` recovers complete highlights, annotations, and withdrawals
@@ -266,6 +269,11 @@ python neighbour.py pairs --vault '/vault' --corpus vault --side problem \
 # Expose the structurally valid active-policy surface.
 python policy_index.py --vault "/vault" --json
 
+# Expose structural directory-refactor facts without changing the directory.
+python directory_audit.py "/downloads" --hash-duplicates --verify-archives --json
+# Verify a semantically nominated pair whose names cannot establish the relation.
+python directory_audit.py "/downloads" --archive-pair "bundle.zip" "renamed-output" --json
+
 # Recover external sources, then validate an agent-authored grouping plan.
 python x_posts.py --file "/scratch/x-links.txt" --out "/scratch/sources.json"
 python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
@@ -321,6 +329,7 @@ python test_note_chunks.py   # Markdown structure and Problem Note boundaries
 python test_neighbour.py     # index lifecycle, retrieval, recurrence consumers
 python test_sources.py       # source adapters and source-to-note invariants
 python test_note_rename.py   # guarded Obsidian rename identity transaction
+python test_directory_audit.py  # directory census, identity, archive relations
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need

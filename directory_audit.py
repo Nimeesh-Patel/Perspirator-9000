@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Read-only structural facts for a directory refactor.
+
+The tool deliberately does not decide whether a file is useful, superseded,
+or safe to delete.  It exposes repeatable facts that can criticise those
+semantic conjectures: directory shape, byte-identical files, and verified
+ZIP/extracted-directory relations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import stat
+import sys
+import zipfile
+import zlib
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class FileRecord:
+    path: Path
+    relative: str
+    size: int
+    mtime_ns: int
+    top_level: str
+
+
+def _is_reparse(path: Path) -> bool:
+    """Return whether *path* is a link/reparse boundary without following it."""
+    info = path.lstat()
+    attrs = getattr(info, "st_file_attributes", 0)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return path.is_symlink() or bool(attrs & reparse)
+
+
+def scan_tree(root: Path) -> tuple[list[FileRecord], list[str], int]:
+    """Scan regular files below *root* without traversing reparse points."""
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError(f"not a directory: {root}")
+
+    files: list[FileRecord] = []
+    boundaries: list[str] = []
+    directory_count = 0
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                relative = path.relative_to(root).as_posix()
+                try:
+                    if _is_reparse(path):
+                        boundaries.append(relative)
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        directory_count += 1
+                        pending.append(path)
+                    elif entry.is_file(follow_symlinks=False):
+                        info = entry.stat(follow_symlinks=False)
+                        files.append(FileRecord(
+                            path=path,
+                            relative=relative,
+                            size=info.st_size,
+                            mtime_ns=info.st_mtime_ns,
+                            top_level=Path(relative).parts[0],
+                        ))
+                except FileNotFoundError:
+                    # A concurrently removed entry is unavailable rather than
+                    # silently converted into a zero-length or empty record.
+                    boundaries.append(f"{relative} [vanished during scan]")
+    files.sort(key=lambda item: item.relative.casefold())
+    boundaries.sort(key=str.casefold)
+    return files, boundaries, directory_count
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def exact_duplicate_groups(files: list[FileRecord]) -> list[dict]:
+    """Hash only same-size candidates and return byte-identity groups."""
+    by_size: dict[int, list[FileRecord]] = defaultdict(list)
+    for item in files:
+        if item.size:
+            by_size[item.size].append(item)
+
+    by_identity: dict[tuple[int, str], list[FileRecord]] = defaultdict(list)
+    for size, candidates in by_size.items():
+        if len(candidates) < 2:
+            continue
+        for item in candidates:
+            by_identity[(size, _sha256(item.path))].append(item)
+
+    groups = []
+    for (size, digest), copies in by_identity.items():
+        if len(copies) < 2:
+            continue
+        groups.append({
+            "sha256": digest,
+            "bytes_per_copy": size,
+            "copies": len(copies),
+            "bytes_beyond_one_copy": size * (len(copies) - 1),
+            "paths": [item.relative for item in copies],
+        })
+    groups.sort(key=lambda item: (-item["bytes_beyond_one_copy"], item["paths"]))
+    return groups
+
+
+def _normal_zip_entries(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    return [entry for entry in archive.infolist() if not entry.is_dir()]
+
+
+def _zip_maps(entries: list[zipfile.ZipInfo]) -> list[tuple[str, dict[str, zipfile.ZipInfo]]]:
+    direct = {entry.filename.replace("\\", "/").lstrip("/").casefold(): entry
+              for entry in entries}
+    variants = [("direct", direct)]
+    parts = [entry.filename.replace("\\", "/").lstrip("/").split("/", 1)
+             for entry in entries]
+    roots = {item[0].casefold() for item in parts}
+    if len(roots) == 1 and parts and all(len(item) == 2 for item in parts):
+        stripped = {item[1].casefold(): entry for item, entry in zip(parts, entries)}
+        variants.append(("strip-common-root", stripped))
+    return variants
+
+
+def _crc32(path: Path) -> int:
+    checksum = 0
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            checksum = zlib.crc32(block, checksum)
+    return checksum & 0xFFFFFFFF
+
+
+def compare_zip_folder(zip_path: Path, folder_path: Path, *, verify_crc: bool) -> dict:
+    """Compare a ZIP manifest with a candidate extracted directory."""
+    folder_files, boundaries, directory_count = scan_tree(folder_path)
+    folder_map = {item.relative.casefold(): item for item in folder_files}
+    with zipfile.ZipFile(zip_path) as archive:
+        entries = _normal_zip_entries(archive)
+        variants = _zip_maps(entries)
+        mapping_name, entry_map = max(
+            variants,
+            key=lambda variant: sum(key in folder_map for key in variant[1]),
+        )
+
+        crc_matches = 0
+        crc_mismatches = 0
+        size_mismatches = 0
+        missing = 0
+        path_matches = 0
+        for relative, entry in entry_map.items():
+            item = folder_map.get(relative)
+            if item is None:
+                missing += 1
+                continue
+            path_matches += 1
+            if item.size != entry.file_size:
+                size_mismatches += 1
+            elif verify_crc:
+                if _crc32(item.path) == entry.CRC:
+                    crc_matches += 1
+                else:
+                    crc_mismatches += 1
+
+    extra = len(folder_files) - path_matches
+    manifest_identical = not (missing or extra or size_mismatches)
+    content_identical = manifest_identical and (
+        not verify_crc or (crc_matches == len(entries) and not crc_mismatches)
+    )
+    return {
+        "zip": str(zip_path),
+        "folder": str(folder_path),
+        "mapping": mapping_name,
+        "verification": "crc32" if verify_crc else "path-and-size",
+        "status": "identical-representation" if content_identical else "different",
+        "zip_entries": len(entries),
+        "folder_files": len(folder_files),
+        "path_matches": path_matches,
+        "crc_matches": crc_matches if verify_crc else None,
+        "crc_mismatches": crc_mismatches if verify_crc else None,
+        "size_mismatches": size_mismatches,
+        "zip_missing_from_folder": missing,
+        "folder_extra": extra,
+        "zip_bytes": zip_path.stat().st_size,
+        "folder_bytes": sum(item.size for item in folder_files),
+        "folder_directories": directory_count,
+        "folder_reparse_boundaries": boundaries,
+    }
+
+
+def discover_archive_pairs(root: Path) -> list[tuple[Path, Path, str]]:
+    """Nominate unambiguous sibling ZIP/directory name relations."""
+    pairs = []
+    directories_by_parent: dict[Path, list[Path]] = defaultdict(list)
+    for current, names, _ in os.walk(root, followlinks=False):
+        parent = Path(current)
+        names[:] = [name for name in names if not _is_reparse(parent / name)]
+        directories_by_parent[parent] = [parent / name for name in names]
+
+    for current, names, filenames in os.walk(root, followlinks=False):
+        parent = Path(current)
+        names[:] = [name for name in names if not _is_reparse(parent / name)]
+        directories = directories_by_parent[parent]
+        for filename in filenames:
+            zip_path = parent / filename
+            if zip_path.suffix.casefold() != ".zip":
+                continue
+            stem = zip_path.stem.casefold()
+            ranked = []
+            for directory in directories:
+                name = directory.name.casefold()
+                if name == stem:
+                    ranked.append((3, directory, "same-stem"))
+                elif stem.startswith(name) and stem[len(name):len(name) + 1] in "-_. [":
+                    ranked.append((2, directory, "directory-name-prefix"))
+                elif name.startswith(stem) and name[len(stem):len(stem) + 1] in "-_. [":
+                    ranked.append((1, directory, "zip-stem-prefix"))
+            if not ranked:
+                continue
+            ranked.sort(key=lambda item: (-item[0], item[1].name.casefold()))
+            best_score = ranked[0][0]
+            best = [item for item in ranked if item[0] == best_score]
+            if len(best) == 1:
+                _, directory, rule = best[0]
+                pairs.append((zip_path, directory, rule))
+    pairs.sort(key=lambda item: item[0].as_posix().casefold())
+    return pairs
+
+
+def audit(root: Path, *, hash_duplicates: bool, verify_archives: bool,
+          explicit_archive_pairs: list[tuple[Path, Path]] | None = None) -> dict:
+    root = root.resolve(strict=True)
+    files, boundaries, directory_count = scan_tree(root)
+    extension_counts = Counter((item.path.suffix.casefold() or "[none]") for item in files)
+    extension_bytes = Counter()
+    for item in files:
+        extension_bytes[item.path.suffix.casefold() or "[none]"] += item.size
+
+    top_level_files = [item for item in files if "/" not in item.relative]
+    top_level_directories = [path for path in root.iterdir()
+                             if path.is_dir() and not _is_reparse(path)]
+    result = {
+        "schema_version": 1,
+        "root": str(root),
+        "scope": "read-only; reparse points are reported and not traversed",
+        "files": len(files),
+        "directories": directory_count,
+        "bytes": sum(item.size for item in files),
+        "top_level_files": len(top_level_files),
+        "top_level_directories": len(top_level_directories),
+        "reparse_boundaries": boundaries,
+        "extensions": [
+            {"extension": extension, "files": extension_counts[extension],
+             "bytes": extension_bytes[extension]}
+            for extension in sorted(extension_counts,
+                                    key=lambda value: (-extension_bytes[value], value))
+        ],
+        "exact_duplicates": exact_duplicate_groups(files) if hash_duplicates else None,
+        "archive_pairs": [],
+        "limitations": [
+            "Byte identity does not establish that one path is dispensable.",
+            "Archive discovery is a filename-based nomination among sibling paths.",
+            "Usefulness, supersession, canonical identity, and retention remain explanatory judgments.",
+        ],
+    }
+    if verify_archives:
+        nominated = discover_archive_pairs(root)
+        for zip_path, folder_path in explicit_archive_pairs or []:
+            zip_path = zip_path if zip_path.is_absolute() else root / zip_path
+            folder_path = folder_path if folder_path.is_absolute() else root / folder_path
+            nominated.append((zip_path.resolve(strict=True),
+                              folder_path.resolve(strict=True), "explicit"))
+        unique = {}
+        for zip_path, folder_path, rule in nominated:
+            unique[(zip_path.resolve(), folder_path.resolve())] = rule
+        for (zip_path, folder_path), rule in sorted(
+                unique.items(), key=lambda item: str(item[0][0]).casefold()):
+            comparison = compare_zip_folder(zip_path, folder_path, verify_crc=True)
+            comparison["discovery_rule"] = rule
+            result["archive_pairs"].append(comparison)
+    return result
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path, help="directory to inspect read-only")
+    parser.add_argument("--hash-duplicates", action="store_true",
+                        help="SHA-256 same-size candidates and report exact groups")
+    parser.add_argument("--verify-archives", action="store_true",
+                        help="CRC-check unambiguous sibling ZIP/directory candidates")
+    parser.add_argument("--archive-pair", action="append", nargs=2,
+                        metavar=("ZIP", "FOLDER"), default=[],
+                        help="explicitly nominate a ZIP and extracted folder; repeatable")
+    parser.add_argument("--json", action="store_true",
+                        help="emit the stable JSON record (currently the only format)")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        pairs = [(Path(zip_path), Path(folder_path))
+                 for zip_path, folder_path in args.archive_pair]
+        result = audit(args.root, hash_duplicates=args.hash_duplicates,
+                       verify_archives=args.verify_archives or bool(pairs),
+                       explicit_archive_pairs=pairs)
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print(json.dumps({"status": "unavailable", "error": str(error)}), file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
