@@ -294,18 +294,23 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
         manifest_path, progress=progress, progress_every=progress_every,
         hash_workers=hash_workers)
     if validation.get("status") != "ready":
-        return {
+        refused_at = _now()
+        refusal = {
             "schema_version": SCHEMA_VERSION,
             "operation": ("recycle-bin-cleanup" if disposition == "recycle"
                           else "permanent-cleanup"),
             "disposition": disposition,
             "recoverable": disposition == "recycle",
             "status": "refused",
+            "started_at": refused_at,
+            "ended_at": refused_at,
             "manifest": str(manifest_path),
             "approved_manifest_sha256": approved_sha256,
             "validation": validation,
             "operations": [],
         }
+        _write_checkpoint(record_path, refusal)
+        return refusal
     if validation.get("manifest_sha256", "").casefold() != approved_sha256:
         raise RuntimeError("validator observed a different manifest identity")
     if sha256_file(manifest_path) != approved_sha256:

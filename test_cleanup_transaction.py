@@ -71,11 +71,15 @@ class CleanupTransactionTests(unittest.TestCase):
             manifest, targets = self._fixture(root)
             approved = sha256_file(manifest)
             targets[0].write_bytes(b"changed")
-            result = apply_cleanup(manifest, approved, root / "record.json",
+            record = root / "record.json"
+            result = apply_cleanup(manifest, approved, record,
                                    mutator=self._delete,
                                    capacity_checker=self._capacity)
             self.assertEqual(result["status"], "refused")
             self.assertTrue(all(path.exists() for path in targets))
+            self.assertEqual(
+                json.loads(record.read_text(encoding="utf-8"))["status"],
+                "refused")
 
     def test_adapter_failure_is_indeterminate_and_stops(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
