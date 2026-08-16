@@ -1,11 +1,12 @@
 import tempfile
 import unittest
 import zipfile
+import subprocess
 from pathlib import Path
 
 from directory_audit import (audit, compare_zip_folder,
-                             discover_archive_pairs, exact_duplicate_groups,
-                             scan_tree)
+                             compare_zip_git_head, discover_archive_pairs,
+                             exact_duplicate_groups, scan_tree)
 
 
 class DirectoryAuditTests(unittest.TestCase):
@@ -119,6 +120,61 @@ class DirectoryAuditTests(unittest.TestCase):
             self.assertEqual(result["archive_pairs"][0]["discovery_rule"], "explicit")
             self.assertEqual(result["archive_pairs"][0]["status"],
                              "identical-representation")
+
+    def test_zip_can_be_proved_identical_to_git_head(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email",
+                            "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name",
+                            "Directory Audit Test"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "core.autocrlf",
+                            "false"], check=True)
+            (repo / "one.txt").write_text("one\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "one.txt"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "one"], check=True)
+            archive_path = root / "repo-main.zip"
+            subprocess.run([
+                "git", "-C", str(repo), "archive", "--format=zip",
+                "--prefix=repo-main/", f"--output={archive_path}", "HEAD",
+            ], check=True)
+
+            result = compare_zip_git_head(archive_path, repo)
+
+            self.assertEqual(result["status"], "identical-head")
+            self.assertEqual(result["same_as_head"], 1)
+            self.assertFalse(result["working_tree_dirty"])
+
+    def test_git_comparison_exposes_divergence_and_dirty_state(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email",
+                            "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name",
+                            "Directory Audit Test"], check=True)
+            (repo / "changed.txt").write_text("head\n", encoding="utf-8")
+            (repo / "extra.txt").write_text("extra\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "head"], check=True)
+            (repo / "uncommitted.txt").write_text("dirty\n", encoding="utf-8")
+            archive_path = root / "snapshot.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("snapshot/changed.txt", "archive\n")
+                archive.writestr("snapshot/missing.txt", "missing\n")
+
+            result = compare_zip_git_head(archive_path, repo)
+
+            self.assertEqual(result["status"], "divergent")
+            self.assertEqual(result["changed_from_head"], 1)
+            self.assertEqual(result["missing_from_head"], 1)
+            self.assertEqual(result["head_extra_paths"], ["extra.txt"])
+            self.assertTrue(result["working_tree_dirty"])
 
 
 if __name__ == "__main__":

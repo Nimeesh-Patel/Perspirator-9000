@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import sys
 import zipfile
 import zlib
@@ -80,7 +81,7 @@ def scan_tree(root: Path) -> tuple[list[FileRecord], list[str], int]:
     return files, boundaries, directory_count
 
 
-def _sha256(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
@@ -100,7 +101,7 @@ def exact_duplicate_groups(files: list[FileRecord]) -> list[dict]:
         if len(candidates) < 2:
             continue
         for item in candidates:
-            by_identity[(size, _sha256(item.path))].append(item)
+            by_identity[(size, sha256_file(item.path))].append(item)
 
     groups = []
     for (size, digest), copies in by_identity.items():
@@ -199,6 +200,97 @@ def compare_zip_folder(zip_path: Path, folder_path: Path, *, verify_crc: bool) -
     }
 
 
+def _git(repo: Path, *arguments: str, text: bool = True):
+    return subprocess.run(
+        ["git", "-C", str(repo), *arguments],
+        check=True,
+        capture_output=True,
+        text=text,
+    ).stdout
+
+
+def _git_head_tree(repo: Path) -> tuple[str, str, dict[str, str]]:
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    object_format = _git(repo, "rev-parse", "--show-object-format").strip()
+    raw = _git(repo, "ls-tree", "-r", "-z", "HEAD", text=False)
+    tree = {}
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        metadata, encoded_path = record.split(b"\t", 1)
+        _mode, kind, object_id = metadata.decode("ascii").split()
+        if kind == "blob":
+            tree[encoded_path.decode("utf-8", "surrogateescape")] = object_id
+    return head, object_format, tree
+
+
+def _git_blob_id(data: bytes, object_format: str) -> str:
+    digest = hashlib.new(object_format)
+    digest.update(f"blob {len(data)}\0".encode("ascii"))
+    digest.update(data)
+    return digest.hexdigest()
+
+
+def compare_zip_git_head(zip_path: Path, repo_path: Path) -> dict:
+    """Compare ZIP entry bytes with the tracked blobs at a repository HEAD."""
+    repo_path = Path(_git(repo_path, "rev-parse", "--show-toplevel").strip())
+    head, object_format, tree = _git_head_tree(repo_path)
+    dirty_paths = [line for line in _git(repo_path, "status", "--porcelain").splitlines()
+                   if line]
+    with zipfile.ZipFile(zip_path) as archive:
+        entries = _normal_zip_entries(archive)
+        variants = _zip_maps(entries)
+        mapping_name, entry_map = max(
+            variants,
+            key=lambda variant: sum(key in {name.casefold() for name in tree}
+                                    for key in variant[1]),
+        )
+        head_by_case = {name.casefold(): (name, object_id)
+                        for name, object_id in tree.items()}
+        same_paths = []
+        changed_paths = []
+        missing_paths = []
+        archive_paths = set()
+        for relative, entry in entry_map.items():
+            archive_paths.add(relative)
+            head_item = head_by_case.get(relative)
+            if head_item is None:
+                missing_paths.append(relative)
+                continue
+            head_name, expected_id = head_item
+            if _git_blob_id(archive.read(entry), object_format) == expected_id:
+                same_paths.append(head_name)
+            else:
+                changed_paths.append(head_name)
+    extra_paths = sorted(name for name in tree if name.casefold() not in archive_paths)
+    if not changed_paths and not missing_paths and not extra_paths:
+        status = "identical-head"
+    elif not changed_paths and not missing_paths:
+        status = "head-contains-archive-with-extras"
+    else:
+        status = "divergent"
+    return {
+        "zip": str(zip_path),
+        "repository": str(repo_path),
+        "head": head,
+        "object_format": object_format,
+        "mapping": mapping_name,
+        "status": status,
+        "zip_entries": len(entries),
+        "head_blobs": len(tree),
+        "same_as_head": len(same_paths),
+        "changed_from_head": len(changed_paths),
+        "missing_from_head": len(missing_paths),
+        "head_extra": len(extra_paths),
+        "changed_paths": sorted(changed_paths),
+        "missing_paths": sorted(missing_paths),
+        "head_extra_paths": extra_paths,
+        "working_tree_dirty": bool(dirty_paths),
+        "working_tree_status": dirty_paths,
+        "zip_bytes": zip_path.stat().st_size,
+    }
+
+
 def discover_archive_pairs(root: Path) -> list[tuple[Path, Path, str]]:
     """Nominate unambiguous sibling ZIP/directory name relations."""
     pairs = []
@@ -239,7 +331,8 @@ def discover_archive_pairs(root: Path) -> list[tuple[Path, Path, str]]:
 
 
 def audit(root: Path, *, hash_duplicates: bool, verify_archives: bool,
-          explicit_archive_pairs: list[tuple[Path, Path]] | None = None) -> dict:
+          explicit_archive_pairs: list[tuple[Path, Path]] | None = None,
+          explicit_git_pairs: list[tuple[Path, Path]] | None = None) -> dict:
     root = root.resolve(strict=True)
     files, boundaries, directory_count = scan_tree(root)
     extension_counts = Counter((item.path.suffix.casefold() or "[none]") for item in files)
@@ -268,10 +361,12 @@ def audit(root: Path, *, hash_duplicates: bool, verify_archives: bool,
         ],
         "exact_duplicates": exact_duplicate_groups(files) if hash_duplicates else None,
         "archive_pairs": [],
+        "git_pairs": [],
         "limitations": [
             "Byte identity does not establish that one path is dispensable.",
             "Archive discovery is a filename-based nomination among sibling paths.",
             "Usefulness, supersession, canonical identity, and retention remain explanatory judgments.",
+            "Git comparison is against committed HEAD; working-tree changes are reported separately.",
         ],
     }
     if verify_archives:
@@ -289,6 +384,11 @@ def audit(root: Path, *, hash_duplicates: bool, verify_archives: bool,
             comparison = compare_zip_folder(zip_path, folder_path, verify_crc=True)
             comparison["discovery_rule"] = rule
             result["archive_pairs"].append(comparison)
+    for zip_path, repo_path in explicit_git_pairs or []:
+        zip_path = zip_path if zip_path.is_absolute() else root / zip_path
+        repo_path = repo_path if repo_path.is_absolute() else root / repo_path
+        result["git_pairs"].append(compare_zip_git_head(
+            zip_path.resolve(strict=True), repo_path.resolve(strict=True)))
     return result
 
 
@@ -302,6 +402,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive-pair", action="append", nargs=2,
                         metavar=("ZIP", "FOLDER"), default=[],
                         help="explicitly nominate a ZIP and extracted folder; repeatable")
+    parser.add_argument("--git-pair", action="append", nargs=2,
+                        metavar=("ZIP", "REPOSITORY"), default=[],
+                        help="compare ZIP blobs with a Git repository HEAD; repeatable")
     parser.add_argument("--json", action="store_true",
                         help="emit the stable JSON record (currently the only format)")
     return parser
@@ -312,10 +415,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pairs = [(Path(zip_path), Path(folder_path))
                  for zip_path, folder_path in args.archive_pair]
+        git_pairs = [(Path(zip_path), Path(repo_path))
+                     for zip_path, repo_path in args.git_pair]
         result = audit(args.root, hash_duplicates=args.hash_duplicates,
                        verify_archives=args.verify_archives or bool(pairs),
-                       explicit_archive_pairs=pairs)
-    except (OSError, ValueError, zipfile.BadZipFile) as error:
+                       explicit_archive_pairs=pairs,
+                       explicit_git_pairs=git_pairs)
+    except (OSError, ValueError, zipfile.BadZipFile,
+            subprocess.CalledProcessError) as error:
         print(json.dumps({"status": "unavailable", "error": str(error)}), file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, ensure_ascii=False))

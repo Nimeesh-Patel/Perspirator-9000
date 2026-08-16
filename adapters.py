@@ -10,7 +10,7 @@ from pathlib import Path
 SCRIPT_NAMES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
                 "note_chunks.py", "neighbour.py", "obsidian_cli.py",
                 "policy_index.py", "note_rename.py", "anki_query.py",
-                "directory_audit.py",
+                "directory_audit.py", "cleanup_manifest.py",
                 "source_to_notes.py", "x_posts.py", "readera_highlights.py",
                 "highlights_to_notes.py", "video_sources.py", "evaluate_retrieval.py",
                 "change_transaction.py", "contracts.py", "artifact_lifecycle.py",

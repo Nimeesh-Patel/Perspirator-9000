@@ -206,8 +206,11 @@ relations, and conflicts.
 - `policy_index.py` exposes and structurally validates the active policy surface.
 - `anki_query.py` provides bounded read-only AnkiConnect facts without owning rendering.
 - `directory_audit.py` reports a read-only directory census, optional exact-byte
-  duplicate groups, and CRC-verified sibling ZIP/extraction relations without
-  deciding usefulness, supersession, or retention.
+  duplicate groups, CRC-verified ZIP/extraction relations, and ZIP-to-Git-HEAD
+  blob identity without deciding usefulness, supersession, or retention.
+- `cleanup_manifest.py` proves that every path in an approval-gated cleanup
+  manifest is still inside its declared root and still has the approved file
+  or recursive-tree identity. It validates only and performs no deletion.
 - `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
   Note Tweets and attached X Articles when structurally present.
 - `readera_highlights.py` recovers complete highlights, annotations, and withdrawals
@@ -273,6 +276,10 @@ python policy_index.py --vault "/vault" --json
 python directory_audit.py "/downloads" --hash-duplicates --verify-archives --json
 # Verify a semantically nominated pair whose names cannot establish the relation.
 python directory_audit.py "/downloads" --archive-pair "bundle.zip" "renamed-output" --json
+# Prove whether a downloaded source snapshot is already owned by Git HEAD.
+python directory_audit.py "/downloads" --git-pair "project-main.zip" "/work/project" --json
+# Refuse a cleanup transaction whose approved paths or bytes have changed.
+python cleanup_manifest.py "/scratch/cleanup-manifest.json" --json
 
 # Recover external sources, then validate an agent-authored grouping plan.
 python x_posts.py --file "/scratch/x-links.txt" --out "/scratch/sources.json"
@@ -330,6 +337,7 @@ python test_neighbour.py     # index lifecycle, retrieval, recurrence consumers
 python test_sources.py       # source adapters and source-to-note invariants
 python test_note_rename.py   # guarded Obsidian rename identity transaction
 python test_directory_audit.py  # directory census, identity, archive relations
+python test_cleanup_manifest.py  # exact cleanup-plan containment and staleness
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need
