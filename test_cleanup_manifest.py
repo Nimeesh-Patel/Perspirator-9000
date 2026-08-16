@@ -46,6 +46,28 @@ class CleanupManifestTests(unittest.TestCase):
             self.assertEqual(result["status"], "ready")
             self.assertEqual(result["targets_observed"], 2)
 
+    def test_omitted_descriptive_tree_counts_are_allowed(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            _, _, _, manifest = self._fixture(Path(tmp))
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            tree = payload["groups"][0]["items"][1]
+            del tree["file_count"]
+            del tree["directory_count"]
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            result = validate_manifest(manifest)
+            self.assertEqual(result["status"], "ready")
+
+    def test_declared_descriptive_tree_count_is_enforced(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            _, _, _, manifest = self._fixture(Path(tmp))
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["groups"][0]["items"][1]["directory_count"] += 1
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            result = validate_manifest(manifest)
+            self.assertEqual(result["status"], "stale-or-invalid")
+            self.assertTrue(any("directory_count changed" in item
+                                for item in result["problems"]))
+
     def test_changed_file_refuses_transaction(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             _, target, _, manifest = self._fixture(Path(tmp))

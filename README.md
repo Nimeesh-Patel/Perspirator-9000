@@ -212,12 +212,18 @@ relations, and conflicts.
   bounded progress and explicit inaccessible/reparse boundaries.
 - `cleanup_manifest.py` proves that every path in an approval-gated cleanup
   manifest is still inside its declared root and still has the approved file
-  or recursive-tree identity. It validates only and performs no deletion.
+  or recursive-tree identity. Declared descriptive tree counts are enforced,
+  but their omission does not fabricate a false count assertion. It validates
+  only and performs no deletion.
 - `cleanup_transaction.py` binds an explicit manifest SHA-256 approval to a
-  a cheap capacity feasibility check, complete exact preflight, fresh per-target
-  identity checks, durable checkpoints, and the Windows Recycle Bin. It stops on ambiguous
-  outcomes rather than retrying an operation whose state is unknown or letting
-  an oversized request become a permanent delete.
+  declared `recycle` or `permanent` disposition, complete exact preflight,
+  fresh per-target identity checks, durable checkpoints, and a fixed Windows
+  deletion adapter. Recycle operations also prove policy and capacity. It
+  stops on ambiguous outcomes rather than retrying an operation whose state is
+  unknown; permanent operations are explicit and recorded as non-recoverable.
+- `cleanup_partition.py` derives disposition-specific child manifests from
+  caller-selected parent groups while preserving item identities, unknown
+  fields, parent content address, and the supplied authority explanation.
 - `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
   Note Tweets and attached X Articles when structurally present.
 - `readera_highlights.py` recovers complete highlights, annotations, and withdrawals
@@ -292,8 +298,14 @@ python cleanup_manifest.py "/work/cleanup-manifest.json" --progress --hash-worke
 python cleanup_manifest.py "/scratch/cleanup-manifest.json" --json
 # Apply only an explicitly approved manifest through the recoverable adapter.
 python cleanup_transaction.py "/scratch/cleanup-manifest.json" \
-  --approved-sha256 "<exact-manifest-sha256>" --record "/work/cleanup-run.json" \
+  --approved-sha256 "<exact-manifest-sha256>" --disposition recycle \
+  --record "/work/cleanup-run.json" \
   --apply --progress --hash-workers 8
+
+# Derive exact disposition-specific children without rewriting approved items.
+python cleanup_partition.py "/work/parent-manifest.json" \
+  --group "large-abandoned-state" --disposition permanent \
+  --authority "explicit user decision" --out "/work/permanent-child.json"
 
 # Recover external sources, then validate an agent-authored grouping plan.
 python x_posts.py --file "/scratch/x-links.txt" --out "/scratch/sources.json"
@@ -353,6 +365,7 @@ python test_note_rename.py   # guarded Obsidian rename identity transaction
 python test_directory_audit.py  # directory census, identity, archive relations
 python test_cleanup_manifest.py  # exact cleanup-plan containment and staleness
 python test_cleanup_transaction.py  # approval binding and recoverable outcomes
+python test_cleanup_partition.py  # exact child manifests and authority chain
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need

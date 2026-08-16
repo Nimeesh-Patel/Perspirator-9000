@@ -254,8 +254,17 @@ def validate_manifest(manifest_path: Path, *, progress=None,
                 observed_total += state["bytes"]
                 if state["reparse_boundaries"]:
                     problems.append(f"{item_label}: tree contains reparse boundaries")
-                for field in ("bytes", "file_count", "directory_count",
-                              "tree_sha256"):
+                # Counts are useful explanatory assertions, but the original
+                # manifest contract identifies a tree by its byte total and
+                # deterministic regular-file digest.  Older or hand-authored
+                # manifests may omit either redundant count.  Validate a count
+                # when it is declared; do not turn absence into a false claim
+                # that the live value is ``None``.
+                required_fields = ("bytes", "tree_sha256")
+                optional_fields = ("file_count", "directory_count")
+                for field in required_fields + optional_fields:
+                    if field in optional_fields and field not in item:
+                        continue
                     expected = item.get(field)
                     actual = state[field]
                     if field.endswith("sha256") and isinstance(expected, str):

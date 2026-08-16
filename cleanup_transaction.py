@@ -68,18 +68,25 @@ def _declared_targets(manifest_path: Path) -> list[dict]:
     return targets
 
 
-def windows_recycle(path: Path, *, run=subprocess.run) -> None:
-    """Move one exact file or directory to the Windows Recycle Bin.
+def _windows_delete(path: Path, disposition: str, *, run=subprocess.run) -> None:
+    """Apply one exact Windows deletion through a named disposition.
 
     The target travels over stdin rather than entering command text, keeping
     the platform-specific adapter independent of path quoting and shell
     interpretation.
     """
+    if disposition not in {"recycle", "permanent"}:
+        raise ValueError(f"unsupported deletion disposition: {disposition}")
     script = r"""
 Add-Type -AssemblyName Microsoft.VisualBasic
-$target = [Console]::In.ReadToEnd()
+$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$target = [string]$request.path
 $ui = [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs
-$recycle = [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+$recycle = if ($request.disposition -eq 'permanent') {
+  [Microsoft.VisualBasic.FileIO.RecycleOption]::DeletePermanently
+} else {
+  [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+}
 $cancel = [Microsoft.VisualBasic.FileIO.UICancelOption]::ThrowException
 if ([System.IO.File]::Exists($target)) {
   [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($target, $ui, $recycle, $cancel)
@@ -91,11 +98,22 @@ if ([System.IO.File]::Exists($target)) {
 """
     completed = run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-        input=str(path), text=True, capture_output=True, check=False)
+        input=json.dumps({"path": str(path), "disposition": disposition}),
+        text=True, capture_output=True, check=False)
     if completed.returncode:
         detail = (completed.stderr or completed.stdout or
                   f"PowerShell exited {completed.returncode}").strip()
         raise OSError(detail)
+
+
+def windows_recycle(path: Path, *, run=subprocess.run) -> None:
+    """Move one exact file or directory to the Windows Recycle Bin."""
+    _windows_delete(path, "recycle", run=run)
+
+
+def windows_permanent_delete(path: Path, *, run=subprocess.run) -> None:
+    """Permanently delete one exact file or directory on Windows."""
+    _windows_delete(path, "permanent", run=run)
 
 
 def windows_recycle_capacity(targets: list[dict], *, run=subprocess.run) -> dict:
@@ -210,7 +228,8 @@ def _fresh_target(observed: dict, *, progress=None,
 
 
 def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
-                  *, recycler=windows_recycle, validator=validate_manifest,
+                  *, disposition: str = "recycle", mutator=None,
+                  validator=validate_manifest,
                   capacity_checker=windows_recycle_capacity,
                   progress=None, progress_every: int = 10_000,
                   hash_workers: int = 8) -> dict:
@@ -220,6 +239,11 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
     if not SHA256_PATTERN.fullmatch(approved_sha256):
         raise ValueError("approved SHA-256 must contain exactly 64 hex characters")
     approved_sha256 = approved_sha256.casefold()
+    if disposition not in {"recycle", "permanent"}:
+        raise ValueError("disposition must be recycle or permanent")
+    if mutator is None:
+        mutator = (windows_recycle if disposition == "recycle"
+                   else windows_permanent_delete)
     if record_path.exists() or record_path.with_name(record_path.name + ".tmp").exists():
         raise FileExistsError(
             f"transaction record already exists; inspect it rather than retry: {record_path}")
@@ -229,6 +253,13 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
     # Approval binds these declarations before they are trusted for mutation.
     # Capacity cannot justify deletion, so it is safe and cheaper to reject an
     # impossible Recycle Bin plan before hashing every target.
+    payload = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    declared_disposition = payload.get("disposition")
+    if declared_disposition is None and "Recycle Bin" in str(payload.get("operation", "")):
+        declared_disposition = "recycle"
+    if declared_disposition != disposition:
+        raise ValueError(
+            f"manifest disposition {declared_disposition!r} does not match requested {disposition!r}")
     declared = _declared_targets(manifest_path)
     for target in declared:
         if target["type"] != "directory_tree":
@@ -238,12 +269,14 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
             raise ValueError("manifest cannot be inside a nominated directory")
         if _within_or_equal(record_path, target_path):
             raise ValueError("transaction record cannot be inside a nominated directory")
-    if declared:
+    if declared and disposition == "recycle":
         feasibility = capacity_checker(declared)
         if feasibility.get("status") != "available":
             refusal = {
                 "schema_version": SCHEMA_VERSION,
                 "operation": "recycle-bin-cleanup",
+                "disposition": disposition,
+                "recoverable": True,
                 "status": "refused",
                 "started_at": _now(), "ended_at": _now(),
                 "manifest": str(manifest_path),
@@ -263,7 +296,10 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
     if validation.get("status") != "ready":
         return {
             "schema_version": SCHEMA_VERSION,
-            "operation": "recycle-bin-cleanup",
+            "operation": ("recycle-bin-cleanup" if disposition == "recycle"
+                          else "permanent-cleanup"),
+            "disposition": disposition,
+            "recoverable": disposition == "recycle",
             "status": "refused",
             "manifest": str(manifest_path),
             "approved_manifest_sha256": approved_sha256,
@@ -287,11 +323,14 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
             raise ValueError("transaction record cannot be inside a nominated directory")
     # Re-observe capacity after the potentially long exact validation because
     # another process may have changed Recycle Bin state in the meantime.
-    capacity = capacity_checker(targets)
-    if capacity.get("status") != "available":
+    capacity = (capacity_checker(targets) if disposition == "recycle"
+                else {"status": "not-applicable"})
+    if disposition == "recycle" and capacity.get("status") != "available":
         refusal = {
             "schema_version": SCHEMA_VERSION,
             "operation": "recycle-bin-cleanup",
+            "disposition": disposition,
+            "recoverable": True,
             "status": "refused",
             "started_at": _now(), "ended_at": _now(),
             "manifest": str(manifest_path),
@@ -306,7 +345,10 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
         return refusal
     record = {
         "schema_version": SCHEMA_VERSION,
-        "operation": "recycle-bin-cleanup",
+        "operation": ("recycle-bin-cleanup" if disposition == "recycle"
+                      else "permanent-cleanup"),
+        "disposition": disposition,
+        "recoverable": disposition == "recycle",
         "status": "applying",
         "started_at": _now(),
         "manifest": str(manifest_path),
@@ -361,7 +403,7 @@ def apply_cleanup(manifest_path: Path, approved_sha256: str, record_path: Path,
         record["current"] = intent
         _write_checkpoint(record_path, record)
         try:
-            recycler(Path(target["path"]))
+            mutator(Path(target["path"]))
         except Exception as error:  # platform adapter failures require observation
             intent.update({
                 "status": "indeterminate", "ended_at": _now(),
@@ -406,8 +448,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--approved-sha256", required=True)
     parser.add_argument("--record", required=True, type=Path)
+    parser.add_argument("--disposition", choices=("recycle", "permanent"),
+                        required=True,
+                        help="must match the disposition declared by the manifest")
     parser.add_argument("--apply", action="store_true",
-                        help="perform the recoverable transaction; otherwise refuse")
+                        help="perform the declared transaction; otherwise refuse")
     parser.add_argument("--progress", action="store_true",
                         help="emit JSON validation and precondition progress to stderr")
     parser.add_argument("--progress-every", type=int, default=10_000)
@@ -424,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = apply_cleanup(
             args.manifest, args.approved_sha256, args.record,
+            disposition=args.disposition,
             progress=emit if args.progress else None,
             progress_every=args.progress_every, hash_workers=args.hash_workers)
     except (OSError, RuntimeError, ValueError) as error:
