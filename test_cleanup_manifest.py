@@ -31,6 +31,7 @@ class CleanupManifestTests(unittest.TestCase):
                      "sha256": sha256_file(target)},
                     {"type": "directory_tree", "path": str(folder),
                      "bytes": state["bytes"], "file_count": state["file_count"],
+                     "directory_count": state["directory_count"],
                      "tree_sha256": state["tree_sha256"]},
                 ],
             }],
@@ -102,6 +103,25 @@ class CleanupManifestTests(unittest.TestCase):
             sequential = tree_state(root, hash_workers=1)
             parallel = tree_state(root, hash_workers=4)
             self.assertEqual(sequential, parallel)
+
+    def test_overlapping_targets_are_refused(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            _, _, folder, manifest = self._fixture(root)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            nested = folder / "one.txt"
+            nested_item = {
+                "type": "file", "path": str(nested),
+                "bytes": nested.stat().st_size, "sha256": sha256_file(nested),
+            }
+            payload["groups"][0]["items"].append(nested_item)
+            payload["groups"][0]["bytes"] += nested_item["bytes"]
+            payload["total_bytes"] += nested_item["bytes"]
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            result = validate_manifest(manifest)
+            self.assertEqual(result["status"], "stale-or-invalid")
+            self.assertTrue(any("overlapping target" in item
+                                for item in result["problems"]))
 
 
 if __name__ == "__main__":

@@ -213,6 +213,11 @@ relations, and conflicts.
 - `cleanup_manifest.py` proves that every path in an approval-gated cleanup
   manifest is still inside its declared root and still has the approved file
   or recursive-tree identity. It validates only and performs no deletion.
+- `cleanup_transaction.py` binds an explicit manifest SHA-256 approval to a
+  a cheap capacity feasibility check, complete exact preflight, fresh per-target
+  identity checks, durable checkpoints, and the Windows Recycle Bin. It stops on ambiguous
+  outcomes rather than retrying an operation whose state is unknown or letting
+  an oversized request become a permanent delete.
 - `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
   Note Tweets and attached X Articles when structurally present.
 - `readera_highlights.py` recovers complete highlights, annotations, and withdrawals
@@ -285,6 +290,10 @@ python directory_audit.py "/home" --top-level-census --progress --json
 python cleanup_manifest.py "/work/cleanup-manifest.json" --progress --hash-workers 8 --json
 # Refuse a cleanup transaction whose approved paths or bytes have changed.
 python cleanup_manifest.py "/scratch/cleanup-manifest.json" --json
+# Apply only an explicitly approved manifest through the recoverable adapter.
+python cleanup_transaction.py "/scratch/cleanup-manifest.json" \
+  --approved-sha256 "<exact-manifest-sha256>" --record "/work/cleanup-run.json" \
+  --apply --progress --hash-workers 8
 
 # Recover external sources, then validate an agent-authored grouping plan.
 python x_posts.py --file "/scratch/x-links.txt" --out "/scratch/sources.json"
@@ -343,6 +352,7 @@ python test_sources.py       # source adapters and source-to-note invariants
 python test_note_rename.py   # guarded Obsidian rename identity transaction
 python test_directory_audit.py  # directory census, identity, archive relations
 python test_cleanup_manifest.py  # exact cleanup-plan containment and staleness
+python test_cleanup_transaction.py  # approval binding and recoverable outcomes
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need

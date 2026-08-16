@@ -152,6 +152,7 @@ def validate_manifest(manifest_path: Path, *, progress=None,
 
     targets = []
     seen_paths = set()
+    resolved_paths = []
     expected_total = 0
     observed_total = 0
     group_names = set()
@@ -202,7 +203,25 @@ def validate_manifest(manifest_path: Path, *, progress=None,
             if key in seen_paths:
                 problems.append(f"{item_label}: duplicate target")
                 continue
+            overlap = None
+            for existing in resolved_paths:
+                try:
+                    resolved.relative_to(existing)
+                    overlap = f"nested inside {existing}"
+                    break
+                except ValueError:
+                    pass
+                try:
+                    existing.relative_to(resolved)
+                    overlap = f"contains prior target {existing}"
+                    break
+                except ValueError:
+                    pass
+            if overlap:
+                problems.append(f"{item_label}: overlapping target ({overlap})")
+                continue
             seen_paths.add(key)
+            resolved_paths.append(resolved)
 
             kind = item.get("type")
             observed = {"path": str(resolved), "type": kind}
@@ -235,7 +254,8 @@ def validate_manifest(manifest_path: Path, *, progress=None,
                 observed_total += state["bytes"]
                 if state["reparse_boundaries"]:
                     problems.append(f"{item_label}: tree contains reparse boundaries")
-                for field in ("bytes", "file_count", "tree_sha256"):
+                for field in ("bytes", "file_count", "directory_count",
+                              "tree_sha256"):
                     expected = item.get(field)
                     actual = state[field]
                     if field.endswith("sha256") and isinstance(expected, str):
