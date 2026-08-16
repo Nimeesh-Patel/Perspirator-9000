@@ -6,10 +6,33 @@ from pathlib import Path
 
 from directory_audit import (audit, compare_zip_folder,
                              compare_zip_git_head, discover_archive_pairs,
-                             exact_duplicate_groups, scan_tree)
+                             exact_duplicate_groups, scan_tree,
+                             top_level_census)
 
 
 class DirectoryAuditTests(unittest.TestCase):
+    def test_large_root_census_reports_independent_partitions_and_progress(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            (root / "first").mkdir()
+            (root / "first" / "a.txt").write_bytes(b"aaa")
+            (root / "second").mkdir()
+            (root / "second" / "b.txt").write_bytes(b"bb")
+            (root / "loose.txt").write_bytes(b"x")
+            events = []
+
+            result = top_level_census(root, progress=events.append,
+                                      progress_every=1)
+
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(result["files"], 3)
+            self.assertEqual(result["directories"], 2)
+            self.assertEqual(result["bytes"], 6)
+            self.assertEqual(result["partitions"][0]["name"], "first")
+            completed = [item["partition"] for item in events
+                         if item["event"] == "partition-complete"]
+            self.assertEqual(set(completed), {"first", "second", "loose.txt"})
+
     def test_census_and_exact_duplicates_are_separate_facts(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             root = Path(tmp)

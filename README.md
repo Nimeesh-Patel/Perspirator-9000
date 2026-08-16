@@ -207,7 +207,9 @@ relations, and conflicts.
 - `anki_query.py` provides bounded read-only AnkiConnect facts without owning rendering.
 - `directory_audit.py` reports a read-only directory census, optional exact-byte
   duplicate groups, CRC-verified ZIP/extraction relations, and ZIP-to-Git-HEAD
-  blob identity without deciding usefulness, supersession, or retention.
+  blob identity without deciding usefulness, supersession, or retention. Large
+  roots can be scanned as independently reported top-level partitions with
+  bounded progress and explicit inaccessible/reparse boundaries.
 - `cleanup_manifest.py` proves that every path in an approval-gated cleanup
   manifest is still inside its declared root and still has the approved file
   or recursive-tree identity. It validates only and performs no deletion.
@@ -278,6 +280,9 @@ python directory_audit.py "/downloads" --hash-duplicates --verify-archives --jso
 python directory_audit.py "/downloads" --archive-pair "bundle.zip" "renamed-output" --json
 # Prove whether a downloaded source snapshot is already owned by Git HEAD.
 python directory_audit.py "/downloads" --git-pair "project-main.zip" "/work/project" --json
+# Preserve partial evidence and progress when a root is too large for one opaque pass.
+python directory_audit.py "/home" --top-level-census --progress --json
+python cleanup_manifest.py "/work/cleanup-manifest.json" --progress --hash-workers 8 --json
 # Refuse a cleanup transaction whose approved paths or bytes have changed.
 python cleanup_manifest.py "/scratch/cleanup-manifest.json" --json
 

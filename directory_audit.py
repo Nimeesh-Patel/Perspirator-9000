@@ -40,7 +40,8 @@ def _is_reparse(path: Path) -> bool:
     return path.is_symlink() or bool(attrs & reparse)
 
 
-def scan_tree(root: Path) -> tuple[list[FileRecord], list[str], int]:
+def scan_tree(root: Path, *, progress=None,
+              progress_every: int = 10_000) -> tuple[list[FileRecord], list[str], int]:
     """Scan regular files below *root* without traversing reparse points."""
     root = root.resolve(strict=True)
     if not root.is_dir():
@@ -49,10 +50,20 @@ def scan_tree(root: Path) -> tuple[list[FileRecord], list[str], int]:
     files: list[FileRecord] = []
     boundaries: list[str] = []
     directory_count = 0
+    scanned_bytes = 0
+    work_units = 0
     pending = [root]
     while pending:
         current = pending.pop()
-        with os.scandir(current) as entries:
+        try:
+            entries = os.scandir(current)
+        except OSError as error:
+            relative = ("." if current == root
+                        else current.relative_to(root).as_posix())
+            boundaries.append(
+                f"{relative} [unavailable: {error.__class__.__name__}: {error}]")
+            continue
+        with entries:
             for entry in entries:
                 path = Path(entry.path)
                 relative = path.relative_to(root).as_posix()
@@ -65,6 +76,7 @@ def scan_tree(root: Path) -> tuple[list[FileRecord], list[str], int]:
                         pending.append(path)
                     elif entry.is_file(follow_symlinks=False):
                         info = entry.stat(follow_symlinks=False)
+                        scanned_bytes += info.st_size
                         files.append(FileRecord(
                             path=path,
                             relative=relative,
@@ -72,13 +84,109 @@ def scan_tree(root: Path) -> tuple[list[FileRecord], list[str], int]:
                             mtime_ns=info.st_mtime_ns,
                             top_level=Path(relative).parts[0],
                         ))
-                except FileNotFoundError:
-                    # A concurrently removed entry is unavailable rather than
-                    # silently converted into a zero-length or empty record.
-                    boundaries.append(f"{relative} [vanished during scan]")
+                except OSError as error:
+                    # A concurrently removed or inaccessible entry is an
+                    # explicit boundary rather than a fabricated empty record.
+                    boundaries.append(
+                        f"{relative} [unavailable: {error.__class__.__name__}: {error}]")
+                work_units += 1
+                if progress and work_units % progress_every == 0:
+                    progress({
+                        "files": len(files),
+                        "directories": directory_count,
+                        "bytes": scanned_bytes,
+                        "boundaries": len(boundaries),
+                        "pending_directories": len(pending),
+                    })
     files.sort(key=lambda item: item.relative.casefold())
     boundaries.sort(key=str.casefold)
     return files, boundaries, directory_count
+
+
+def top_level_census(root: Path, *, progress=None,
+                     progress_every: int = 10_000) -> dict:
+    """Census independently reportable top-level partitions of a large root."""
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError(f"not a directory: {root}")
+    partitions = []
+    global_boundaries = []
+    for child in sorted(root.iterdir(), key=lambda path: path.name.casefold()):
+        record = {"name": child.name, "path": str(child)}
+        try:
+            if _is_reparse(child):
+                record.update({
+                    "kind": "reparse-boundary", "status": "boundary",
+                    "files": 0, "directories": 0, "bytes": 0,
+                    "reparse_boundaries": [child.name],
+                })
+                global_boundaries.append(child.name)
+            elif child.is_file():
+                record.update({
+                    "kind": "file", "status": "complete", "files": 1,
+                    "directories": 0, "bytes": child.stat().st_size,
+                    "reparse_boundaries": [],
+                })
+            elif child.is_dir():
+                def report(state, partition=child.name):
+                    if progress:
+                        progress({"event": "partition-progress",
+                                  "partition": partition, **state})
+
+                files, boundaries, directories = scan_tree(
+                    child, progress=report, progress_every=progress_every)
+                prefixed = [f"{child.name}/{boundary}" for boundary in boundaries]
+                global_boundaries.extend(prefixed)
+                record.update({
+                    "kind": "directory",
+                    "status": ("partial" if any("[unavailable:" in item
+                                                for item in boundaries)
+                               else "complete"),
+                    "files": len(files),
+                    "directories": directories + 1,
+                    "bytes": sum(item.size for item in files),
+                    "reparse_boundaries": boundaries,
+                })
+            else:
+                record.update({
+                    "kind": "other", "status": "boundary", "files": 0,
+                    "directories": 0, "bytes": 0,
+                    "reparse_boundaries": [child.name],
+                })
+                global_boundaries.append(child.name)
+        except OSError as error:
+            record.update({
+                "kind": "unavailable", "status": "unavailable", "files": 0,
+                "directories": 0, "bytes": 0,
+                "reparse_boundaries": [], "error": str(error),
+            })
+        partitions.append(record)
+        if progress:
+            progress({"event": "partition-complete",
+                      "partition": child.name, **record})
+
+    incomplete = [item for item in partitions
+                  if item["status"] in {"partial", "unavailable"}]
+    ranked = sorted(partitions, key=lambda item: (-item["bytes"],
+                                                  item["name"].casefold()))
+    return {
+        "schema_version": 1,
+        "mode": "top-level-census",
+        "status": "partial" if incomplete else "complete",
+        "root": str(root),
+        "scope": "read-only; top-level partitions are independent and reparse points are not traversed",
+        "files": sum(item["files"] for item in partitions),
+        "directories": sum(item["directories"] for item in partitions),
+        "bytes": sum(item["bytes"] for item in partitions),
+        "partitions": ranked,
+        "reparse_boundaries": sorted(global_boundaries, key=str.casefold),
+        "incomplete_partitions": [item["name"] for item in incomplete],
+        "limitations": [
+            "A completed partition establishes structural size, not that its contents are dispensable.",
+            "Partial partitions preserve observed counts but may omit inaccessible state.",
+            "Dependency cache, project requirement, installed runtime, and unique data remain distinct explanatory roles.",
+        ],
+    }
 
 
 def sha256_file(path: Path) -> str:
@@ -405,6 +513,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--git-pair", action="append", nargs=2,
                         metavar=("ZIP", "REPOSITORY"), default=[],
                         help="compare ZIP blobs with a Git repository HEAD; repeatable")
+    parser.add_argument("--top-level-census", action="store_true",
+                        help="scan large roots as independently reported top-level partitions")
+    parser.add_argument("--progress", action="store_true",
+                        help="with --top-level-census, emit JSON progress records to stderr")
     parser.add_argument("--json", action="store_true",
                         help="emit the stable JSON record (currently the only format)")
     return parser
@@ -413,6 +525,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.top_level_census:
+            incompatible = (args.hash_duplicates or args.verify_archives
+                            or args.archive_pair or args.git_pair)
+            if incompatible:
+                raise ValueError(
+                    "--top-level-census is a structural pass; run hashing and pair verification on nominated partitions")
+
+            def emit_progress(record):
+                print(json.dumps(record, ensure_ascii=False),
+                      file=sys.stderr, flush=True)
+
+            result = top_level_census(
+                args.root, progress=(emit_progress if args.progress else None))
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
         pairs = [(Path(zip_path), Path(folder_path))
                  for zip_path, folder_path in args.archive_pair]
         git_pairs = [(Path(zip_path), Path(repo_path))

@@ -80,6 +80,29 @@ class CleanupManifestTests(unittest.TestCase):
             self.assertEqual(result["status"], "stale-or-invalid")
             self.assertTrue(any("escapes" in item for item in result["problems"]))
 
+    def test_tree_state_reports_scan_and_hash_progress(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            (root / "one.txt").write_text("one", encoding="utf-8")
+            (root / "two.txt").write_text("two", encoding="utf-8")
+            events = []
+            state = tree_state(root, progress=events.append, progress_every=1)
+            self.assertEqual(state["file_count"], 2)
+            names = {event["event"] for event in events}
+            self.assertIn("tree-scan-progress", names)
+            self.assertIn("tree-hash-progress", names)
+            self.assertIn("tree-hash-complete", names)
+
+    def test_parallel_tree_hash_preserves_deterministic_identity(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            for number in range(20):
+                (root / f"{number:02}.txt").write_bytes(
+                    (f"payload-{number}" * 100).encode("utf-8"))
+            sequential = tree_state(root, hash_workers=1)
+            parallel = tree_state(root, hash_workers=4)
+            self.assertEqual(sequential, parallel)
+
 
 if __name__ == "__main__":
     unittest.main()

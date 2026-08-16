@@ -9,6 +9,7 @@ still inside the declared root and still has the approved byte identity.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -21,18 +22,56 @@ from directory_audit import _is_reparse, scan_tree, sha256_file
 SCHEMA_VERSION = 1
 
 
-def tree_state(root: Path) -> dict:
-    """Return the deterministic regular-file identity of a directory tree."""
-    files, boundaries, directories = scan_tree(root)
+def tree_state(root: Path, *, progress=None,
+               progress_every: int = 10_000,
+               hash_workers: int = 8) -> dict:
+    """Return the deterministic regular-file identity of a directory tree.
+
+    Progress is explanatory evidence only: it reports observed scan and hash
+    state without weakening the final all-or-nothing identity result.
+    """
+    root = root.resolve(strict=True)
+
+    def report_scan(state):
+        if progress:
+            progress({"event": "tree-scan-progress", "root": str(root),
+                      **state})
+
+    files, boundaries, directories = scan_tree(
+        root, progress=report_scan, progress_every=progress_every)
     digest = hashlib.sha256()
-    for item in files:
-        identity = sha256_file(item.path)
-        digest.update(item.relative.encode("utf-8", "surrogatepass"))
-        digest.update(b"\0")
-        digest.update(str(item.size).encode("ascii"))
-        digest.update(b"\0")
-        digest.update(identity.encode("ascii"))
-        digest.update(b"\n")
+    hashed_bytes = 0
+    total_bytes = sum(entry.size for entry in files)
+    batch_size = max(progress_every, hash_workers * 64)
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=hash_workers) as executor:
+        for start in range(0, len(files), batch_size):
+            batch = files[start:start + batch_size]
+            identities = executor.map(
+                sha256_file, (item.path for item in batch))
+            for offset, (item, identity) in enumerate(
+                    zip(batch, identities), start=1):
+                index = start + offset
+                hashed_bytes += item.size
+                digest.update(item.relative.encode("utf-8", "surrogatepass"))
+                digest.update(b"\0")
+                digest.update(str(item.size).encode("ascii"))
+                digest.update(b"\0")
+                digest.update(identity.encode("ascii"))
+                digest.update(b"\n")
+                if progress and index % progress_every == 0:
+                    progress({
+                        "event": "tree-hash-progress", "root": str(root),
+                        "files_hashed": index, "files_total": len(files),
+                        "bytes_hashed": hashed_bytes,
+                        "bytes_total": total_bytes,
+                    })
+    if progress:
+        progress({
+            "event": "tree-hash-complete", "root": str(root),
+            "files_hashed": len(files), "files_total": len(files),
+            "bytes_hashed": hashed_bytes, "bytes_total": total_bytes,
+        })
     return {
         "file_count": len(files),
         "directory_count": directories,
@@ -70,7 +109,9 @@ def _resolve_target(source: Path, root: Path) -> Path:
     return resolved
 
 
-def validate_manifest(manifest_path: Path) -> dict:
+def validate_manifest(manifest_path: Path, *, progress=None,
+                      progress_every: int = 10_000,
+                      hash_workers: int = 8) -> dict:
     """Validate schema, containment, totals, and current target identities."""
     manifest_path = manifest_path.resolve(strict=True)
     problems = []
@@ -182,7 +223,14 @@ def validate_manifest(manifest_path: Path) -> dict:
                 if not resolved.is_dir():
                     problems.append(f"{item_label}: target is not a directory")
                     continue
-                state = tree_state(resolved)
+                def report_tree(state, target=str(resolved)):
+                    if progress:
+                        progress({"target": target, **state})
+
+                state = tree_state(
+                    resolved, progress=report_tree,
+                    progress_every=progress_every,
+                    hash_workers=hash_workers)
                 observed.update(state)
                 observed_total += state["bytes"]
                 if state["reparse_boundaries"]:
@@ -225,9 +273,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--json", action="store_true",
                         help="emit the stable JSON record (currently the only format)")
+    parser.add_argument(
+        "--progress", action="store_true",
+        help="emit JSON scan/hash progress records to stderr")
+    parser.add_argument(
+        "--progress-every", type=int, default=10_000,
+        help="progress interval in observed entries/files (default: 10000)")
+    parser.add_argument(
+        "--hash-workers", type=int, default=8,
+        help="bounded parallel file-hash workers (default: 8)")
     args = parser.parse_args(argv)
+    if args.progress_every <= 0:
+        parser.error("--progress-every must be positive")
+    if args.hash_workers <= 0:
+        parser.error("--hash-workers must be positive")
+
+    def emit_progress(record):
+        print(json.dumps(record, ensure_ascii=False), file=sys.stderr,
+              flush=True)
+
     try:
-        result = validate_manifest(args.manifest)
+        result = validate_manifest(
+            args.manifest,
+            progress=emit_progress if args.progress else None,
+            progress_every=args.progress_every,
+            hash_workers=args.hash_workers)
     except OSError as error:
         result = {"status": "unavailable", "problems": [str(error)]}
     print(json.dumps(result, indent=2, ensure_ascii=False))
