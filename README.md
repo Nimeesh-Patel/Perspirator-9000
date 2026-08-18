@@ -111,6 +111,16 @@ refuted vault-side conjectures. It owns no rendering, and writes are
 whitelisted out, so a destructive Anki operation stays an explicit approved
 act rather than a side effect of a query.
 
+`calibre_query.py` is the analogous read-only boundary onto a running Calibre
+GUI library. It uses only `calibredb list --for-machine` through a Content
+Server at a literal loopback address; it never opens
+`metadata.db`, invokes a write command, enables local-write, or targets a LAN
+or public address. Results preserve the Content Server library id, Calibre book
+id and UUID, live observation time, exact metadata, and a `calibre://` locator.
+Calibre's machine JSON is decoded strictly as UTF-8 and provider JSON is written
+as UTF-8 bytes, independent of the Windows active code page. Bounded results
+and every failure remain explicit through the shared provider status contract.
+
 Rendering a Problem Note into card HTML has exactly one implementation,
 Interest's `AnkiSyncService`, reachable from a shell through
 `dart run tool/sync_anki_notes.dart`. A second renderer here was retired on
@@ -205,6 +215,9 @@ relations, and conflicts.
   candidates using criteria from `Candidate Selection.md`.
 - `policy_index.py` exposes and structurally validates the active policy surface.
 - `anki_query.py` provides bounded read-only AnkiConnect facts without owning rendering.
+- `calibre_query.py` lists and searches a loopback-only Calibre
+  Content Server without touching the library database directly or exposing a
+  mutation command.
 - `directory_audit.py` reports a read-only directory census, optional exact-byte
   duplicate groups, CRC-verified ZIP/extraction relations, and ZIP-to-Git-HEAD
   blob identity without deciding usefulness, supersession, or retention. Large
@@ -315,6 +328,25 @@ python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
 # After auditing a stage that contains explicit existing:true operations.
 python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
   --vault "/vault" --write --append-existing
+
+# Query the Calibre GUI's loopback Content Server without opening metadata.db.
+python calibre_query.py --library-id Calibre_Library status
+python calibre_query.py --library-id Calibre_Library \
+  search 'title:"the selfish gene"'
+```
+
+Before these calls, configure Calibre's built-in Content Server to listen on
+`127.0.0.1` only and keep local-write off. Authentication is optional for this
+same-computer read path; if enabled, pass both `--username` and
+`--password-file`.
+
+The adapter defaults to port `8081`, refuses hostnames and non-loopback IPs, and
+accepts another loopback port through `--server`. Use Calibre's documented
+special library id `-` once to discover the exact id rather than guessing it:
+
+```bash
+calibredb list --with-library http://127.0.0.1:8081/#- \
+  --for-machine
 ```
 
 For source-to-Problem-Note work, query neighbours twice: first with source
@@ -366,6 +398,7 @@ python test_directory_audit.py  # directory census, identity, archive relations
 python test_cleanup_manifest.py  # exact cleanup-plan containment and staleness
 python test_cleanup_transaction.py  # approval binding and recoverable outcomes
 python test_cleanup_partition.py  # exact child manifests and authority chain
+python test_calibre_query.py  # loopback/read-only Calibre provider contract
 ```
 
 The suites use synthetic fixtures; neighbour tests use a stub embedder and need
