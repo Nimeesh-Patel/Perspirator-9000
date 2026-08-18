@@ -1,259 +1,79 @@
 # Perspirator 9000
 
-Perspirator is an agent-neutral research toolkit for an Obsidian vault of
-`***` Problem Notes. It helps an agent recover context, traverse a problem web,
-surface possible relations and conflicts, and make only authorised changes.
+Perspirator is a portable institution for criticism, error correction, and
+delegating mechanical work to tools around an Obsidian vault of `***` Problem
+Notes. Its explanatory heart is the **Theory of LLMs** in the vault runtime:
+Nimeesh supplies problems, criticism, and new explanatory knowledge; agents and
+scripts perform perspiration over the knowledge and criteria he supplies.
 
-The repository supplies mechanisms. The vault supplies the current theory and
-instructions. This README explains that architecture; it is not runtime policy.
+This repository is not the institution's current theory. It packages its
+repeatable mechanisms and thin host adapters. The vault supplies the live
+runtime, policies, project explanations, and run reports.
 
-## The code–Markdown boundary
+## One owner for each role
 
-Perspirator is organised to shorten the criticism-and-revision cycle:
-
-- **Code owns executable mechanisms:** parsers, indexes, adapters, installers,
-  validators, stable data contracts, and invariants that must be enforced the
-  same way on every run.
-- **Markdown owns editable theory:** the runtime, policies, semantic criteria,
-  thresholds, instructions, research state, and run reports. Editing an active
-  vault note changes the next run without rebuilding or reinstalling code.
-- **Runs join them:** tools report structural facts; the active Markdown theory
-  tells the agent what questions to ask of those facts; the run records what
-  was actually done so a bad result can be criticised.
-
-This is a design boundary, not a claim that code contains no theory. Parsers,
-schemas, ranking functions, and tests all embody conjectures too. Code is where
-a conjecture goes when it needs deterministic repeated execution; Markdown is
-where it stays when it needs fast criticism, semantic interpretation, or
-frequent revision. Do not state the same rule in both places: code should load
-and validate Markdown configuration instead of copying its meaning.
-
-## Architecture
-
-### Authority and deployment
-
-```text
-Perspirator repository
-  SKILL.md + install.py + adapters.py + Python tools
-                          │
-                          │ install copies the toolkit and resolves two paths
-             ┌────────────┴────────────┐
-             ▼                         ▼
-        Claude Code                  Codex
-   ~/.claude/commands/...    ~/.agents/skills/perspirate/...
-             └────────────┬────────────┘
-                          │ installed adapter is only a locator
-                          ▼
-      <vault>/memory/perspirator/Bootstrap.md
-                          │
-             ┌────────────┼─────────────────────┐
-             ▼            ▼                     ▼
-       Perspirator.md   active policies    copied toolkit path
-       active runtime  via policy_index.py
-             └────────────┼─────────────────────┘
-                          ▼
-                       agent run
-             ┌────────────┼─────────────────────┐
-             ▼            ▼                     ▼
-        full vault   Basic Memory MCP      Python tools
-        Markdown     memory/ only          structural facts
-             └────────────┼─────────────────────┘
-                          ▼
-       explanatory interpretation, authorised writes, run report
-```
-
-There is no hidden daemon. Each adapter contains the vault and toolkit paths,
-then delegates to the canonical `Bootstrap.md`. The bootstrap refuses to run
-without the active runtime. Repository prose cannot override vault policy.
-
-A vault theory/configuration edit is live on the next run. A repository tool or
-path change requires reinstalling because the installer copies script bytes.
-`doctor.py` detects drift between repository source and installed copies.
-
-Basic Memory and full-vault access are distinct. Basic Memory provides
-cross-application recall over `<vault>/memory/`; filesystem or Obsidian access
-is needed for the root Problem Note corpus.
-
-### Structural dataflow
-
-```text
-<vault>/**/*.md
-        |
-        v
-problem_half.py: one normalized frontmatter/problem/conjecture structure
-        |
-        v
-note_chunks.py: select formation by structure
-        |
-        +-- Problem Note --> complete problem_identity + contextual conjecture
-        |                    (authored boundaries, then token windows if needed)
-        |
-        +-- other note ----> heading-aware authored blocks
-        |
-        v
-neighbour.py index: embed common RetrievalUnit records
-        |
-        v
-neighbour.py match: rank units --> collapse best unit per note
-neighbour.py pairs: rank mutually near filtered units --> collapse note pairs
-        |
-        v
-obsidian_cli.py: bounded links/backlinks/properties after retrieval
-        |
-        v
-agent reads candidate notes and judges identity, relation, conflict, placement
-```
-
-anki_query.py is the read-only boundary onto the external consumer. Anki
-holds facts no other provider has — which cards exist, what a card's fields
-currently say, and what its review history is — and those facts have already
-refuted vault-side conjectures. It owns no rendering, and writes are
-whitelisted out, so a destructive Anki operation stays an explicit approved
-act rather than a side effect of a query.
-
-`calibre_query.py` is the analogous read-only boundary onto a running Calibre
-GUI library. It uses only `calibredb list --for-machine` through a Content
-Server at a literal loopback address; it never opens
-`metadata.db`, invokes a write command, enables local-write, or targets a LAN
-or public address. Results preserve the Content Server library id, Calibre book
-id and UUID, live observation time, exact metadata, and a `calibre://` locator.
-Calibre's machine JSON is decoded strictly as UTF-8 and provider JSON is written
-as UTF-8 bytes, independent of the Windows active code page. Bounded results
-and every failure remain explicit through the shared provider status contract.
-
-Rendering a Problem Note into card HTML has exactly one implementation,
-Interest's `AnkiSyncService`, reachable from a shell through
-`dart run tool/sync_anki_notes.dart`. A second renderer here was retired on
-2026-08-05: it had silently diverged, dropping the hard line breaks Interest
-promotes, so the same note produced different cards depending on which tool
-touched it last. One current rule, one implementation.
-
-Formation is specialised because authored structures explain different units;
-processing is shared because every unit has the same provenance, embedding,
-filtering, ranking, note-collapse, and context-expansion contract. Generic token
-windows are a last formation fallback, not the default. A logical unit whose
-embedding context is still long is covered by token windows and mean-pooled
-back to one vector rather than silently truncated. Cheap traversal and embedding
-retrieval consume the same full parser record, so they cannot disagree merely
-because they parsed `***` separately.
-
-Obsidian context is post-retrieval evidence, not embedding input. The read-only
-adapter probes the running app with bare `obsidian`, targets exact `path=`
-arguments, and exposes links, backlinks, properties, search, contextual search,
-Bases queries, orphans, dead ends, and unresolved links. `neighbour.py` uses the
-path-local evidence and reports filesystem fallback per note when configured, so
-one transient lookup failure does not discard successful Obsidian contexts.
-Neither provider changes vector scores. Repeated `match --file` or `match
---text` arguments share one loaded index, embedding model, link map, and
-Obsidian context cache.
-
-The neighbour index is reused by direct matching and recurrence candidate
-retrieval. Embedding and lexical scores nominate notes to inspect; they do not
-establish identity, relevance, placement, criticism, redundancy, or truth.
-
-```text
-external sources -> platform adapter -> source records + provider result
-                                           |
-                       agent + neighbours -> explanatory grouping plan
-                                           |
-                                           v
-                                source_to_notes.py
-                                guarded filesystem transaction
-```
-
-`policy_index.py` performs the analogous structural job for policy: it exposes
-the problems stated by well-formed active policy notes and refuses an ambiguous
-surface. The agent still explains which policies bear on the present task and
-reads those policies in full.
-
-Source adapters recover facts only. `x_posts.py` is one adapter, not the
-architecture. `source_to_notes.py` checks a plan's mechanical consequences:
-coverage, unique assignment, resolvable and YAML-safe `up:` links, ordinary
-Problem Note structure, and exact source text and locators. Each source record
-states identity, provenance, completeness, and withdrawal state; every provider
-states complete, partial, unavailable, stale, or indeterminate scope. Existing-note
-appends remain explicit, staged, stale-checked, and append-only. The agent—not a
-neighbour score—remains responsible for explanatory identity, grouping,
-relations, and conflicts.
-
-## Canonical Markdown
-
-| Vault note | Authority |
+| Role | Canonical owner |
 |---|---|
-| `memory/perspirator/Bootstrap.md` | Loading, refusal, tool location, reporting, write authority |
-| `memory/perspirator/Perspirator.md` | Active research behaviour and explanatory method |
-| `memory/policies/*.md` | Criticisable semantic and write policies |
-| `memory/perspirator/Candidate Selection.md` | Candidate signals, thresholds, exemptions, draft form |
-| `memory/perspirator/Neighbour Retrieval.md` | Embedding model, indexed areas, exemptions, index location |
-| `memory/perspirator/artifact-lifecycle.json` | Editable roles and retirement conditions for temporary/generated artifacts |
-| `memory/perspirator/runs/README.md` | Inspectable run-report contract |
+| Host discovery | installed adapter generated from `SKILL.md` |
+| Run loading and question-to-tool routing | `<vault>/memory/perspirator/Bootstrap.md` |
+| Explanatory method and Theory of LLMs | `<vault>/memory/perspirator/Perspirator.md` |
+| Editable semantic and write policies | `<vault>/memory/policies/*.md` |
+| Executable mechanisms and enforced invariants | this repository |
+| Past execution evidence | `<vault>/memory/perspirator/runs/` |
 
-## Repository tools
+Installed adapters and copied scripts are generated artifacts. They do not own
+policy, and `doctor.py` detects drift from the repository source. Run reports
+are evidence about past work, never a second current runtime.
 
-- `install.py` renders an adapter and copies the shared toolkit.
-- `doctor.py` validates the active vault contract, source scripts, installed
-  adapters, byte equality, and cross-adapter consistency.
-- `problem_half.py` parses frontmatter and both sides into one structural record.
-- `note_chunks.py` forms inspectable retrieval units using the configured
-  structural strategy.
-- `problem_index.py` creates a disposable map of root-vault Problem Notes.
-- `neighbour.py` indexes units, ranks query neighbours or bounded filtered
-  note pairs, collapses by note identity, and expands configured context for
-  direct matches.
-- `obsidian_cli.py` provides bounded read-only Obsidian search, graph,
-  properties, Bases, and vault-shape context.
-- `note_rename.py` owns the guarded Obsidian note-identity transaction.
-- `change_transaction.py` owns hashes, file preconditions, observed outcomes,
-  rollback metadata, and guarded writes shared by mutation adapters.
-- `contracts.py` owns the minimal source-record and provider-result boundaries;
-  adapters preserve their platform-specific extension fields.
-- `artifact_lifecycle.py` applies mechanically decidable checks from the
-  editable lifecycle declaration without deciding semantic retention value.
-- `.perspirator-install.json` records generated-file ownership in each target;
-  later installs remove an unchanged retired output but refuse a modified one.
-- `problem_candidates.py` surfaces recurring, undeveloped, or unwritten
-  candidates using criteria from `Candidate Selection.md`.
-- `policy_index.py` exposes and structurally validates the active policy surface.
-- `anki_query.py` provides bounded read-only AnkiConnect facts without owning rendering.
-- `calibre_query.py` lists and searches a loopback-only Calibre
-  Content Server without touching the library database directly or exposing a
-  mutation command.
-- `directory_audit.py` reports a read-only directory census, optional exact-byte
-  duplicate groups, CRC-verified ZIP/extraction relations, and ZIP-to-Git-HEAD
-  blob identity without deciding usefulness, supersession, or retention. Large
-  roots can be scanned as independently reported top-level partitions with
-  bounded progress and explicit inaccessible/reparse boundaries.
-- `cleanup_manifest.py` proves that every path in an approval-gated cleanup
-  manifest is still inside its declared root and still has the approved file
-  or recursive-tree identity. Declared descriptive tree counts are enforced,
-  but their omission does not fabricate a false count assertion. It validates
-  only and performs no deletion.
-- `cleanup_transaction.py` binds an explicit manifest SHA-256 approval to a
-  declared `recycle` or `permanent` disposition, complete exact preflight,
-  fresh per-target identity checks, durable checkpoints, and a fixed Windows
-  deletion adapter. Recycle operations also prove policy and capacity. It
-  stops on ambiguous outcomes rather than retrying an operation whose state is
-  unknown; permanent operations are explicit and recorded as non-recoverable.
-- `cleanup_partition.py` derives disposition-specific child manifests from
-  caller-selected parent groups while preserving item identities, unknown
-  fields, parent content address, and the supplied authority explanation.
-- `x_posts.py` canonicalises public X/Twitter statuses and recovers complete
-  Note Tweets and attached X Articles when structurally present.
-- `readera_highlights.py` recovers complete highlights, annotations, and withdrawals
-  from ReadEra snapshot backups.
-- `highlights_to_notes.py` append-only files recovered ReadEra records into their
-  root `collection: Books` entity.
-- `video_sources.py` anchors selected spoken passages to caption timestamps.
-- `source_to_notes.py` validates an explanatory grouping plan, creates new
-  Problem Notes, or applies explicit guarded append-only source blocks.
-- `evaluate_retrieval.py` measures retrieval recall against authored wikilinks.
-- `adapters.py` is the single install/validation manifest for agent targets and scripts.
+## How a run starts
 
-Every CLI documents its detailed arguments and output with `--help`. The code
-is the canonical data-contract definition; duplicating every schema here made
-the README harder to correct.
+```text
+host invokes Perspirator
+        |
+        v
+thin installed adapter
+        |
+        v
+Bootstrap.md ──> active runtime + relevant policies
+        |
+        +──> vault and Basic Memory context
+        +──> bounded native providers
+        +──> structural and transactional tools
+        |
+        v
+agent draws out implications, assumptions, consequences, and conflicts
+        |
+        v
+Nimeesh criticises or creates knowledge; permitted changes are validated
+```
 
-## Install and validate
+There is no hidden daemon. Editing the vault runtime or a policy changes the
+next run immediately. Changing repository code or an installed path requires a
+reinstall because installation copies the toolkit.
+
+## The open-system boundary
+
+Whole-computer scope is a federation of bounded native providers, not one
+universal database or global scan. Calibre, Anki, Obsidian, a filesystem, a
+browser session, and a source platform retain their distinct facts and failure
+modes. A provider result makes its target, scope, freshness, completeness,
+status, records, and unobserved boundary inspectable; it does not decide which
+fact matters or create an explanatory relation.
+
+Repository mechanisms currently cover four broad jobs:
+
+- structural parsing, retrieval, and vault/application context;
+- read-only native observations such as Anki and loopback-only Calibre;
+- exact source recovery and guarded source-to-note formation; and
+- identity-checked rename, staging, cleanup, and transaction validation.
+
+`Bootstrap.md` names the question each mechanism can answer. Every command owns
+its detailed interface in `--help`, and its code and tests own the exact data
+contract. The README deliberately does not duplicate either surface.
+
+## Install and verify
+
+Python 3 is required. From this repository:
 
 ```bash
 python install.py --target All --vault "/path/to/vault"
@@ -261,146 +81,49 @@ python doctor.py --target All --vault "/path/to/vault"
 ```
 
 Targets are `ClaudeCode` (default), `Codex`, `All`, and `Custom`. `Custom`
-requires `--destination`. Directory overrides are available through
+requires `--destination`; directory overrides are available through
 `--claude-dir`, `--codex-dir`, and `--destination`.
 
-Installation replaces only Perspirator's generated adapter and copied toolkit;
-it does not remove unrelated agent files.
+Installation replaces only files named in Perspirator's generated manifest. It
+does not remove unrelated agent files. Adding a host adapter is one entry in
+`adapters.py`, which is shared by installation and validation.
 
-## Common operations
+For the local Calibre provider, configure Calibre's built-in Content Server on
+a literal loopback address with local write disabled. The adapter defaults to
+`http://127.0.0.1:8081`, refuses hostnames and non-loopback IPs, never opens
+`metadata.db`, and exposes no mutation command. Run
+`python calibre_query.py --help` for setup requirements and query syntax.
 
-```bash
-# Read a problem before its conjecture.
-python problem_half.py "/vault/problem.md" --json
+## Development boundary
 
-# Build a disposable root-vault problem map.
-python problem_index.py "/vault" --out "/scratch/problems.json"
+Put a rule in code when it needs deterministic repeated execution or enforced
+validation. Keep it in vault Markdown when it is editable theory, a semantic
+criterion, current project knowledge, or run evidence. Do not maintain the same
+current rule in both places: code should load or validate Markdown-owned
+configuration instead of paraphrasing it.
 
-# Query or investigate possible recurrence.
-python neighbour.py match --vault "/vault" --text "a problem formulation" \
-  --corpus all --side all --unit all --graph configured --k 10
-# Query several notes or source passages without repeatedly loading the model and index.
-python neighbour.py match --vault "/vault" --file "/vault/a.md" \
-  --file "/vault/b.md" --graph configured --json
-python neighbour.py match --vault "/vault" --text "source passage one" \
-  --text "source passage two" --graph configured --json
-python obsidian_cli.py --vault "/vault" context "path/to/note.md"
-python problem_candidates.py --vault "/vault" --json
+The standard library is sufficient for structural, provider, source, and
+transaction tools. Neighbour retrieval additionally uses `numpy`, `torch`, and
+`transformers`. Obsidian CLI is an optional provider, not an installation
+prerequisite.
 
-# Inspect first; --apply invokes the guarded rename once.
-python note_rename.py "old title.md" "new title" --vault "/vault"
-python note_rename.py "old title.md" "new title" --vault "/vault" --apply
-
-# Nominate mutually near root problem identities for explanatory inspection.
-python neighbour.py pairs --vault '/vault' --corpus vault --side problem \
-  --unit problem_identity --k 50
-
-# Expose the structurally valid active-policy surface.
-python policy_index.py --vault "/vault" --json
-
-# Expose structural directory-refactor facts without changing the directory.
-python directory_audit.py "/downloads" --hash-duplicates --verify-archives --json
-# Verify a semantically nominated pair whose names cannot establish the relation.
-python directory_audit.py "/downloads" --archive-pair "bundle.zip" "renamed-output" --json
-# Prove whether a downloaded source snapshot is already owned by Git HEAD.
-python directory_audit.py "/downloads" --git-pair "project-main.zip" "/work/project" --json
-# Preserve partial evidence and progress when a root is too large for one opaque pass.
-python directory_audit.py "/home" --top-level-census --progress --json
-python cleanup_manifest.py "/work/cleanup-manifest.json" --progress --hash-workers 8 --json
-# Refuse a cleanup transaction whose approved paths or bytes have changed.
-python cleanup_manifest.py "/scratch/cleanup-manifest.json" --json
-# Apply only an explicitly approved manifest through the recoverable adapter.
-python cleanup_transaction.py "/scratch/cleanup-manifest.json" \
-  --approved-sha256 "<exact-manifest-sha256>" --disposition recycle \
-  --record "/work/cleanup-run.json" \
-  --apply --progress --hash-workers 8
-
-# Derive exact disposition-specific children without rewriting approved items.
-python cleanup_partition.py "/work/parent-manifest.json" \
-  --group "large-abandoned-state" --disposition permanent \
-  --authority "explicit user decision" --out "/work/permanent-child.json"
-
-# Recover external sources, then validate an agent-authored grouping plan.
-python x_posts.py --file "/scratch/x-links.txt" --out "/scratch/sources.json"
-python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
-  --vault "/vault" --stage "/scratch/notes"
-
-# After auditing a stage that contains explicit existing:true operations.
-python source_to_notes.py "/scratch/sources.json" "/scratch/plan.json" \
-  --vault "/vault" --write --append-existing
-
-# Query the Calibre GUI's loopback Content Server without opening metadata.db.
-python calibre_query.py --library-id Calibre_Library status
-python calibre_query.py --library-id Calibre_Library \
-  search 'title:"the selfish gene"'
-```
-
-Before these calls, configure Calibre's built-in Content Server to listen on
-`127.0.0.1` only and keep local-write off. Authentication is optional for this
-same-computer read path; if enabled, pass both `--username` and
-`--password-file`.
-
-The adapter defaults to port `8081`, refuses hostnames and non-loopback IPs, and
-accepts another loopback port through `--server`. Use Calibre's documented
-special library id `-` once to discover the exact id rather than guessing it:
+Run the complete repository suite with:
 
 ```bash
-calibredb list --with-library http://127.0.0.1:8081/#- \
-  --for-machine
+python -m unittest discover -p "test_*.py"
 ```
 
-For source-to-Problem-Note work, query neighbours twice: first with source
-content to recover the existing problem situation, then with each drafted
-problem to find candidate parents, rivals, and conflicts. Read problem sides
-before conjectures. A source belongs in an existing note only when it addresses
-almost exactly the same conflict under the same criterion; topic, vocabulary,
-parentage, and a high score are insufficient. Otherwise form a new problem and
-relate it. Conflict is a candidate problem, not untidiness to erase.
+The tests use synthetic fixtures; neighbour tests use a stub embedder and do
+not download a model. After changing copied tools, reinstall the affected
+target and run `doctor.py` so the installed enactment cannot silently diverge.
 
-## Data lifetime and authority
+## Repository entry points
 
-- Vault Markdown is authoritative research material.
-- Repository Python and `SKILL.md` are authoritative executable/packaging
-  source; repository changes use Git.
-- Installed adapters and scripts are generated copies; reinstall to update.
-- Problem-index JSON and `.perspirator/neighbours.npz` are disposable and must
-  be regenerated when they disagree with Markdown.
-- Match/candidate output is transient retrieval evidence for agent judgment.
-- Run reports are retained only while they contain a unique criticism,
-  unresolved problem, or replay requirement.
+- `SKILL.md` — minimal host-neutral locator template;
+- `install.py` and `adapters.py` — generated host packaging;
+- `doctor.py` — runtime, contract, lifecycle, and installed-copy validation;
+- `contracts.py` — shared minimal provider/source boundaries; and
+- each tool's `--help` plus its tests — canonical executable interface.
 
-## Dependencies and verification
-
-Python 3 and the standard library are sufficient for every structural and
-source tool. The neighbour subsystem is the sole exception, adding `numpy`,
-`torch`, and `transformers` for the embedding model. Obsidian CLI
-is optional for application-indexed context; bare `obsidian` is its availability
-probe, and configured filesystem fallback keeps vector retrieval usable without
-it. `x_posts.py` uses X's public syndication endpoint and the payload's
-structural Note Tweet
-marker—not text length or appearance—to invoke a status-ID-validated public
-long-text fallback. It records the chosen text route and refuses
-partial Note Tweet text when that recovery fails. Source fetching therefore
-needs network access; the other structural tools operate directly on files.
-An attached `/i/article/` URL invokes article metadata recovery that validates
-both the status ID and article ID and preserves the exact title and non-empty
-text blocks. The adapter refuses partial or mismatched long-form content.
-
-
-Tests are grouped by independently breakable contract rather than by module:
-
-```bash
-python test_note_chunks.py   # Markdown structure and Problem Note boundaries
-python test_neighbour.py     # index lifecycle, retrieval, recurrence consumers
-python test_sources.py       # source adapters and source-to-note invariants
-python test_note_rename.py   # guarded Obsidian rename identity transaction
-python test_directory_audit.py  # directory census, identity, archive relations
-python test_cleanup_manifest.py  # exact cleanup-plan containment and staleness
-python test_cleanup_transaction.py  # approval binding and recoverable outcomes
-python test_cleanup_partition.py  # exact child manifests and authority chain
-python test_calibre_query.py  # loopback/read-only Calibre provider contract
-```
-
-The suites use synthetic fixtures; neighbour tests use a stub embedder and need
-no model download or network. After changing copied repository tools, reinstall
-and run `doctor.py` for the affected target.
+For current behaviour, begin with the configured vault's `Bootstrap.md`, not
+with repository prose.

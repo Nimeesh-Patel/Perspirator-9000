@@ -42,6 +42,12 @@ class CalibreQueryTests(unittest.TestCase):
         values.update(overrides)
         return cq.query(operation, **values)
 
+    def test_help_owns_exact_library_id_discovery(self):
+        self.assertIn(
+            "calibredb list --with-library http://127.0.0.1:8081/#-",
+            cq.__doc__,
+        )
+
     def test_non_loopback_targets_are_refused_before_running_calibredb(self):
         calls = []
         runner = lambda *args, **kwargs: calls.append(args)  # pragma: no cover

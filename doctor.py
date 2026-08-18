@@ -123,21 +123,51 @@ def validate_memory_freshness(vault):
     check("every permalink matches the note's folder",
           not wrong_permalink, ", ".join(wrong_permalink[:3]) or "")
 
-    # Reported, not failed: a note nothing points at has already been forgotten.
-    targets = {p: 0 for p in notes}
+    # Reported, not failed: a current knowledge note nothing points at has
+    # already been forgotten. Lifecycle-declared run reports are directed
+    # execution evidence, not ambient current memory, so mixing them into this
+    # census drowns the Recall signal in deliberately unlinked history.
+    recall_notes, directed_evidence = orphan_census_partition(vault, notes)
+    targets = {p: 0 for p in recall_notes}
     corpus = "\n".join(p.read_text(encoding="utf-8-sig", errors="replace")
-                       for p in notes)
-    for path in notes:
+                        for p in recall_notes)
+    for path in recall_notes:
         stem = path.stem
         if f"[[{stem}]]" in corpus or f"[[{stem}|" in corpus or f"/{stem}]]" in corpus:
             targets[path] = 1
     orphans = [p.relative_to(vault).as_posix() for p, hit in targets.items() if not hit]
-    print(f"  [note] {len(orphans)} of {len(notes)} memory notes have no incoming "
-          f"wikilink (see the Recall policy)")
+    print(f"  [note] {len(orphans)} of {len(recall_notes)} current memory notes have no incoming "
+           f"wikilink (see the Recall policy)")
     for rel in orphans[:8]:
         print(f"         {rel}")
     if len(orphans) > 8:
         print(f"         ... and {len(orphans) - 8} more")
+    if directed_evidence:
+        print(f"  [note] {len(directed_evidence)} lifecycle-declared run reports "
+              "were excluded from the ambient orphan census")
+
+
+def orphan_census_partition(vault, notes):
+    """Separate current memory from lifecycle-declared directed run evidence.
+
+    The lifecycle declaration owns the role boundary. If it is unreadable, the
+    doctor reports that failure elsewhere and this census fails open by keeping
+    every note visible rather than silently excluding an unknown path.
+    """
+    try:
+        lifecycle = load_lifecycle(vault)
+    except ValueError:
+        return list(notes), []
+
+    run_prefixes = [Path(entry["path"]) for entry in lifecycle
+                    if entry.get("role") == "run"]
+    current, directed = [], []
+    for path in notes:
+        relative = path.relative_to(vault)
+        is_run = any(relative == prefix or prefix in relative.parents
+                     for prefix in run_prefixes)
+        (directed if is_run else current).append(path)
+    return current, directed
 
 
 NOT_SHIPPED = {"install.py"}

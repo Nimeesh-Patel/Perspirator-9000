@@ -19,6 +19,9 @@ Examples:
       --username perspirator --password-file C:/private/calibre-password.txt \
       search 'title:"the selfish gene"'
 
+Discover the exact Content Server library id once instead of guessing it:
+    calibredb list --with-library http://127.0.0.1:8081/#- --for-machine
+
 Redirect a successful JSON result to a file and pass it later with
 ``--fallback`` if stale evidence is preferable to no evidence. The fallback is
 validated against the exact operation, server, library, query, and limit.
