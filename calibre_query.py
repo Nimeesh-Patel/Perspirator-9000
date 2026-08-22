@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only Calibre library evidence through a loopback Content Server.
+"""Read-only Calibre library and reading evidence through loopback Calibre.
 
 The Calibre GUI owns the live library. This adapter never opens ``metadata.db``
-and never invokes a mutating ``calibredb`` command. It uses only the documented
-``calibredb list --for-machine`` surface against a Content Server whose address
-is a literal loopback IP.
+and never invokes a mutating ``calibredb`` command. Metadata and indexed
+full-text queries use documented ``calibredb`` read surfaces. Desktop-viewer
+annotations are recovered from the bounded EPUB representation served by the
+Content Server, without modifying or unpacking the library book on disk.
 
 The Content Server must be configured separately in Calibre to listen only on
 127.0.0.1 (or ::1), with local write disabled. Authentication is optional for
@@ -18,26 +19,42 @@ Examples:
     python calibre_query.py --library-id Calibre_Library \
       --username perspirator --password-file C:/private/calibre-password.txt \
       search 'title:"the selfish gene"'
+    python calibre_query.py --library-id Calibre_Library \
+      full-text --book-id 82 Wheeler
+    python calibre_query.py --library-id Calibre_Library \
+      annotations --book-id 82 --format EPUB
 
 Discover the exact Content Server library id once instead of guessing it:
     calibredb list --with-library http://127.0.0.1:8081/#- --for-machine
 
 Redirect a successful JSON result to a file and pass it later with
 ``--fallback`` if stale evidence is preferable to no evidence. The fallback is
-validated against the exact operation, server, library, query, and limit.
+validated against the exact operation and observation scope.
 """
 
 import argparse
+import base64
+import binascii
 import html
+import hashlib
+import io
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
+import zipfile
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from http.client import HTTPException
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.request import (
+    HTTPBasicAuthHandler, HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm,
+    HTTPRedirectHandler, ProxyHandler, Request, build_opener,
+)
 
 from contracts import provider_result, validate_provider_result
 
@@ -46,6 +63,19 @@ PROVIDER = "calibre"
 DEFAULT_SERVER = "http://127.0.0.1:8081"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
+DEFAULT_MAX_BOOK_BYTES = 128 * 1024 * 1024
+MAX_MAX_BOOK_BYTES = 512 * 1024 * 1024
+MAX_ANNOTATION_BYTES = 16 * 1024 * 1024
+FTS_INDEXING_THRESHOLD = 100
+FTS_MATCH_START = "[[CALIBRE_MATCH]]"
+FTS_MATCH_END = "[[/CALIBRE_MATCH]]"
+ANNOTATION_MEMBER = "META-INF/calibre_bookmarks.txt"
+ANNOTATION_MAGIC = b"encoding=json+base64:\n"
+LEGACY_ANNOTATION_SEPARATOR = "*|!|?|*"
+LEGACY_ANNOTATION_ESCAPE = "esc-text-%&*#%(){}ads19-end-esc"
+LEGACY_CURRENT_PAGE = "calibre_current_page_bookmark"
+LEGACY_TIMESTAMP = "1970-01-01T00:00:00+00:00"
+SUPPORTED_ANNOTATION_FORMATS = {"EPUB"}
 FIELDS = (
     "title", "authors", "author_sort", "comments", "formats", "identifiers",
     "languages", "last_modified", "pubdate", "publisher", "rating", "series",
@@ -57,7 +87,13 @@ SORT_FIELDS = {
     "timestamp", "title", "uuid",
 }
 LIBRARY_ID_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
+FORMAT_RE = re.compile(r"^[A-Za-z0-9]+$")
 LOOPBACKS = {"127.0.0.1", "::1"}
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class _PlainText(HTMLParser):
@@ -116,6 +152,29 @@ def validate_library_id(library_id):
     return library_id
 
 
+def validate_book_id(book_id):
+    if isinstance(book_id, bool):
+        raise ValueError("book id must be a positive integer")
+    if isinstance(book_id, int):
+        pass
+    elif isinstance(book_id, str) and book_id.isascii() and book_id.isdigit():
+        book_id = int(book_id)
+    else:
+        raise ValueError("book id must be a positive integer")
+    if book_id < 1:
+        raise ValueError("book id must be a positive integer")
+    return book_id
+
+
+def validate_format(book_format):
+    if not isinstance(book_format, str):
+        raise ValueError("book format must be a simple Calibre format name")
+    book_format = book_format.strip().upper()
+    if not FORMAT_RE.fullmatch(book_format):
+        raise ValueError("book format must be a simple Calibre format name")
+    return book_format
+
+
 def validate_auth(username, password_file):
     """Accept no auth or one complete pair; never substitute local-write."""
     username = username.strip() if isinstance(username, str) else None
@@ -137,7 +196,10 @@ def library_url(server, library_id):
 
 
 def scope_for(operation, server, library_id, *, query=None, limit=None,
-              sort_by=None, ascending=False, authentication="not established"):
+              sort_by=None, ascending=False, authentication="not established",
+              book_id=None, book_format=None, exact=False,
+              indexing_threshold=None, max_book_bytes=None, surface=None,
+              transport=None, read_only_commands=None):
     return {
         "operation": operation,
         "server": server,
@@ -148,9 +210,15 @@ def scope_for(operation, server, library_id, *, query=None, limit=None,
         "limit": limit,
         "sort_by": sort_by,
         "ascending": bool(ascending),
-        "transport": "calibredb via Content Server",
+        "book_id": book_id,
+        "format": book_format,
+        "exact": bool(exact),
+        "indexing_threshold": indexing_threshold,
+        "max_book_bytes": max_book_bytes,
+        "surface": surface,
+        "transport": transport or "calibredb via Content Server",
         "authentication": authentication,
-        "read_only_commands": ["list"],
+        "read_only_commands": read_only_commands or ["list"],
         "local_write_used": False,
     }
 
@@ -160,6 +228,8 @@ def capability_for(operation):
         "status": "probe library readability",
         "list": "list books",
         "search": "search book metadata",
+        "full-text": "search one book through Calibre's full-text index",
+        "annotations": "recover one EPUB's embedded viewer annotations",
     }[operation]
 
 
@@ -210,8 +280,43 @@ def command_for(executable, server, library_id, username, password_file, *,
     return command
 
 
+def fts_command_for(executable, server, library_id, username, password_file, *,
+                    book_id, query, exact=False, timeout=20,
+                    indexing_threshold=FTS_INDEXING_THRESHOLD):
+    """Build one documented, read-only, book-bounded FTS command."""
+    book_id = validate_book_id(book_id)
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("full-text query must be non-empty")
+    if indexing_threshold != FTS_INDEXING_THRESHOLD:
+        raise ValueError(
+            f"indexing threshold must be {FTS_INDEXING_THRESHOLD} so absence "
+            "is not inferred from an incompletely indexed library")
+    command = [
+        executable, "fts_search",
+        "--with-library", library_url(server, library_id),
+    ]
+    if username is not None:
+        command.extend([
+            "--username", username,
+            "--password", f"<f:{password_file.as_posix()}>",
+        ])
+    command.extend([
+        "--timeout", str(timeout),
+        "--output-format", "json",
+        "--include-snippets",
+        "--match-start-marker", FTS_MATCH_START,
+        "--match-end-marker", FTS_MATCH_END,
+        "--indexing-threshold", str(indexing_threshold),
+        "--restrict-to", f"ids:{book_id}",
+    ])
+    if exact:
+        command.append("--do-not-match-on-related-words")
+    command.append(query.strip())
+    return command
+
+
 def invoke(command, timeout, runner=subprocess.run):
-    """Run one allowlisted read and preserve explicit failure uncertainty."""
+    """Run one allowlisted JSON-list read and preserve failure uncertainty."""
     try:
         completed = runner(
             command, capture_output=True, timeout=timeout, check=False)
@@ -237,9 +342,8 @@ def invoke(command, timeout, runner=subprocess.run):
     try:
         raw = completed.stdout
         if isinstance(raw, bytes):
-            # Calibre 7.22's --for-machine implementation writes json.dumps()
-            # bytes encoded as UTF-8. Decode strictly: another code page is a
-            # provider-contract failure, not text to guess or replace.
+            # Calibre's machine JSON is UTF-8. Another code page is a provider
+            # contract failure, not text to guess or replace.
             raw = raw.decode("utf-8-sig", errors="strict")
         payload = json.loads(raw)
     except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -311,6 +415,346 @@ def book_record(row, server, library_id, observed_at):
     }
 
 
+def viewer_locator(library_id, book_id, book_format, open_at=None):
+    base = f"calibre://view-book/{library_id}/{book_id}/{book_format}"
+    if not open_at:
+        return base
+    return f"{base}?open_at={quote(open_at, safe='')}"
+
+
+def _clean_fts_snippet(snippet, query):
+    if not isinstance(snippet, str):
+        raise ValueError("full-text result has a non-text snippet")
+    # Calibre's GUI opens an FTS result by searching for its returned context.
+    # Keep that context intact: selecting or joining only marked terms can lose
+    # a multi-word match or invent a phrase when an FTS expression matched
+    # separated terms.
+    clean = snippet.replace(FTS_MATCH_START, "").replace(FTS_MATCH_END, "")
+    clean = " ".join(clean.replace("\u00a0", " ").split()).strip(" .…")
+    return clean or query.strip()
+
+
+def fts_record(row, server, library_id, restricted_book_id, observed_at,
+               query):
+    if not isinstance(row, dict):
+        raise ValueError("full-text result is not an object")
+    book_id = validate_book_id(row.get("book_id"))
+    if book_id != restricted_book_id:
+        raise ValueError(
+            f"full-text result escaped book restriction: {book_id}")
+    book_format = validate_format(row.get("format"))
+    title = row.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError(f"full-text result for book {book_id} has no title")
+    snippet = row.get("text", "")
+    clean = _clean_fts_snippet(snippet, query)
+    open_at = "search:" + clean
+    return {
+        "id": f"calibre:{library_id}:{book_id}:{book_format}:fts",
+        "provider_identity": {
+            "library_id": library_id,
+            "book_id": book_id,
+            "format": book_format,
+        },
+        "locator": viewer_locator(
+            library_id, book_id, book_format, open_at=open_at),
+        "text": snippet,
+        "title": title.strip(),
+        "authors": row.get("authors"),
+        "format": book_format,
+        "metadata": dict(row),
+        "provenance": {
+            "provider": PROVIDER,
+            "representation": "calibredb fts_search --output-format json",
+            "server": server,
+            "network_scope": "loopback",
+            "library_id": library_id,
+            "observed_at": observed_at,
+        },
+    }
+
+
+def _read_password(password_file):
+    try:
+        raw = Path(password_file).read_bytes()
+        return raw.decode("utf-8-sig", errors="strict").rstrip("\r\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"password file could not be read as UTF-8: {exc}") from exc
+
+
+def fetch_bytes(url, server, username, password_file, timeout, max_bytes,
+                opener_factory=build_opener):
+    """GET one bounded loopback representation without following redirects."""
+    # An explicit empty proxy handler prevents urllib from inheriting system or
+    # environment proxy settings for this loopback-only evidence surface.
+    handlers = [ProxyHandler({}), _NoRedirect()]
+    if username is not None:
+        try:
+            password = _read_password(password_file)
+        except ValueError as exc:
+            return {"ok": False, "status": "unavailable", "error": str(exc)}
+        manager = HTTPPasswordMgrWithDefaultRealm()
+        manager.add_password(None, server, username, password)
+        handlers.extend([
+            HTTPBasicAuthHandler(manager), HTTPDigestAuthHandler(manager)])
+    opener = opener_factory(*handlers)
+    request = Request(
+        url, headers={"Accept": "application/epub+zip, application/octet-stream",
+                      "User-Agent": "Perspirator-Calibre/1"})
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            final = urlsplit(response.geturl())
+            expected = urlsplit(server)
+            if (final.scheme, final.hostname, final.port) != (
+                    expected.scheme, expected.hostname, expected.port):
+                return {
+                    "ok": False, "status": "unavailable",
+                    "error": "Content Server response escaped the configured loopback origin",
+                }
+            declared = response.headers.get("Content-Length")
+            if declared is not None:
+                try:
+                    if int(declared) > max_bytes:
+                        return {
+                            "ok": False, "status": "unavailable",
+                            "error": f"book representation exceeds {max_bytes} bytes",
+                        }
+                except ValueError:
+                    return {
+                        "ok": False, "status": "indeterminate",
+                        "error": "Content Server returned an invalid Content-Length",
+                    }
+            payload = response.read(max_bytes + 1)
+    except HTTPError as exc:
+        return {"ok": False, "status": "unavailable",
+                "error": f"Content Server GET failed with HTTP {exc.code}"}
+    except (socket.timeout, TimeoutError) as exc:
+        return {"ok": False, "status": "indeterminate",
+                "error": f"Content Server GET timed out after {timeout}s: {exc}"}
+    except HTTPException as exc:
+        return {"ok": False, "status": "indeterminate",
+                "error": ("Content Server GET ended with an uncertain HTTP "
+                          f"response: {type(exc).__name__}: {exc}")}
+    except (URLError, OSError) as exc:
+        return {"ok": False, "status": "unavailable",
+                "error": f"Content Server GET failed: {type(exc).__name__}: {exc}"}
+    if len(payload) > max_bytes:
+        return {"ok": False, "status": "unavailable",
+                "error": f"book representation exceeds {max_bytes} bytes"}
+    return {"ok": True, "status": "complete", "bytes": payload}
+
+
+def _decode_legacy_annotations(raw):
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"legacy embedded annotations are not UTF-8: {exc}") from exc
+    records = []
+    observed_rows = 0
+    skip_reasons = {}
+
+    def skipped(reason):
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        observed_rows += 1
+        if "^" in line:
+            skipped("older-legacy-record-not-migrated")
+            continue
+        if LEGACY_ANNOTATION_SEPARATOR not in line:
+            skipped("unrecognized-line")
+            continue
+        try:
+            title, spine_text, pos = line.strip().split(
+                LEGACY_ANNOTATION_SEPARATOR)
+            spine_index = int(spine_text)
+            if spine_index < 0:
+                raise ValueError("negative spine index")
+        except (TypeError, ValueError):
+            skipped("malformed-separator-record")
+            continue
+        pos = pos.replace(LEGACY_ANNOTATION_ESCAPE, "^")
+        try:
+            float(pos)
+        except ValueError:
+            pass
+        else:
+            # Calibre does not migrate legacy numeric positions to the modern
+            # annotation representation.
+            skipped("numeric-position-not-migrated")
+            continue
+        position = f"epubcfi(/{2 * (spine_index + 1)}/{pos.lstrip('/')})"
+        record = {
+            "pos": position,
+            "pos_type": "epubcfi",
+            "timestamp": LEGACY_TIMESTAMP,
+        }
+        if title and title != LEGACY_CURRENT_PAGE:
+            record.update({"type": "bookmark", "title": title})
+        else:
+            record["type"] = "last-read"
+        records.append(record)
+    skipped_rows = sum(skip_reasons.values())
+    return records, {
+        "observed_rows": observed_rows,
+        "recovered_rows": len(records),
+        "skipped_rows": skipped_rows,
+        "skip_reasons": skip_reasons,
+    }
+
+
+def _decode_embedded_annotations(payload):
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            matches = [info for info in archive.infolist()
+                       if info.filename == ANNOTATION_MEMBER]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"EPUB contains duplicate {ANNOTATION_MEMBER} members")
+            if not matches:
+                return [], False, None, {
+                    "observed_rows": 0, "recovered_rows": 0,
+                    "skipped_rows": 0, "skip_reasons": {},
+                }
+            info = matches[0]
+            if info.file_size > MAX_ANNOTATION_BYTES:
+                raise ValueError(
+                    f"embedded annotation member exceeds {MAX_ANNOTATION_BYTES} bytes")
+            with archive.open(info) as handle:
+                raw = handle.read(MAX_ANNOTATION_BYTES + 1)
+    except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
+        raise ValueError(f"book representation is not a readable EPUB ZIP: {exc}") from exc
+    if len(raw) > MAX_ANNOTATION_BYTES:
+        raise ValueError(
+            f"embedded annotation member exceeds {MAX_ANNOTATION_BYTES} bytes")
+    if raw.startswith(ANNOTATION_MAGIC):
+        encoded = b"".join(raw[len(ANNOTATION_MAGIC):].split())
+
+        def reject_nonfinite(value):
+            raise ValueError(f"non-finite JSON number is not supported: {value}")
+
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+            annotations = json.loads(
+                decoded.decode("utf-8-sig", errors="strict"),
+                parse_constant=reject_nonfinite)
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise ValueError(
+                f"embedded annotations are not strict JSON+base64: {exc}") from exc
+        if not isinstance(annotations, list):
+            raise ValueError("embedded annotation payload is not a JSON list")
+        return annotations, True, "json+base64", {
+            "observed_rows": len(annotations),
+            "recovered_rows": len(annotations),
+            "skipped_rows": 0,
+            "skip_reasons": {},
+        }
+    annotations, migration = _decode_legacy_annotations(raw)
+    return annotations, True, "legacy", migration
+
+
+def _viewer_epubcfi_position(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value.startswith("epubcfi(/") or not value.endswith(")"):
+        return None
+    # Validate the package-document spine selector without pretending to be a
+    # complete CFI parser. Calibre-generated selectors are positive even
+    # integers; Calibre itself parses the remainder, including escaped `^)`.
+    first_segment = value[len("epubcfi(/"):-1].partition("/")[0]
+    try:
+        spine_selector = int(first_segment)
+    except ValueError:
+        return None
+    if spine_selector < 2 or spine_selector % 2:
+        return None
+    return value
+
+
+def _annotation_position(annotation):
+    pos = annotation.get("pos")
+    if annotation.get("pos_type") == "epubcfi":
+        position = _viewer_epubcfi_position(pos)
+        if position:
+            return position
+    if annotation.get("type") == "highlight":
+        spine_index = annotation.get("spine_index")
+        start_cfi = annotation.get("start_cfi")
+        if (isinstance(spine_index, int) and spine_index >= 0
+                and isinstance(start_cfi, str) and start_cfi.startswith("/")):
+            return _viewer_epubcfi_position(
+                f"epubcfi(/{2 * (spine_index + 1)}{start_cfi})")
+    return None
+
+
+def _annotation_identity(annotation, index):
+    native = annotation.get("uuid")
+    if isinstance(native, str) and native.strip():
+        return native.strip()
+    if annotation.get("type") == "last-read":
+        return "last-read"
+    if annotation.get("type") == "bookmark":
+        title = annotation.get("title")
+        if isinstance(title, str) and title:
+            digest = hashlib.sha256(
+                title.encode("utf-8", errors="strict")).hexdigest()[:24]
+            return f"bookmark-{digest}"
+    canonical = json.dumps(
+        annotation, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8", errors="strict")
+    digest = hashlib.sha256(canonical).hexdigest()[:24]
+    return f"record-{index}-{digest}"
+
+
+def annotation_record(annotation, index, server, library_id, book_id,
+                      book_format, observed_at):
+    if not isinstance(annotation, dict):
+        raise ValueError("embedded annotation record is not an object")
+    annotation_type = annotation.get("type")
+    if not isinstance(annotation_type, str) or not annotation_type.strip():
+        annotation_type = "unknown"
+    identity = _annotation_identity(annotation, index)
+    position = _annotation_position(annotation)
+    withdrawal_state = (
+        "withdrawn" if annotation.get("removed") is True else "active")
+    parts = []
+    for key in ("highlighted_text", "notes", "title", "pos"):
+        value = annotation.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return {
+        "id": (f"calibre:{library_id}:{book_id}:{book_format}:"
+               f"annotation:{identity}"),
+        "provider_identity": {
+            "library_id": library_id,
+            "book_id": book_id,
+            "format": book_format,
+            "annotation_id": identity,
+        },
+        "locator": viewer_locator(
+            library_id, book_id, book_format,
+            open_at=position if withdrawal_state == "active" else None),
+        "text": "\n".join(parts),
+        "annotation_type": annotation_type,
+        "withdrawal_state": withdrawal_state,
+        "timestamp": annotation.get("timestamp"),
+        "position": position,
+        "metadata": dict(annotation),
+        "provenance": {
+            "provider": PROVIDER,
+            "representation": f"embedded EPUB:{ANNOTATION_MEMBER}",
+            "server": server,
+            "network_scope": "loopback",
+            "library_id": library_id,
+            "observed_at": observed_at,
+        },
+    }
+
+
 def _max_last_modified(records):
     values = [record.get("last_modified") for record in records
               if isinstance(record.get("last_modified"), str)]
@@ -351,7 +795,8 @@ def live_result(operation, server, library_id, username, password_file, *,
             records=[], errors=[])
 
     rows = transport["rows"]
-    truncated = len(rows) > limit
+    raw_count = len(rows)
+    truncated = raw_count > limit
     rows = rows[:limit]
     records = []
     errors = []
@@ -368,7 +813,7 @@ def live_result(operation, server, library_id, username, password_file, *,
 
     scope.update({
         "returned": len(records),
-        "raw_rows": len(rows),
+        "raw_rows": raw_count,
         "truncated": truncated,
     })
     if errors:
@@ -392,6 +837,168 @@ def live_result(operation, server, library_id, username, password_file, *,
         records=records, errors=errors, status_explanation=explanation)
 
 
+def live_fts_result(server, library_id, username, password_file, *,
+                    executable="calibredb", book_id, query, limit=DEFAULT_LIMIT,
+                    exact=False, timeout=20, runner=subprocess.run, now=utc_now):
+    operation = "full-text"
+    observed_at = now()
+    scope = scope_for(
+        operation, server, library_id, query=query, limit=limit,
+        authentication="username/password" if username else "none",
+        book_id=book_id, exact=exact,
+        indexing_threshold=FTS_INDEXING_THRESHOLD,
+        surface="Calibre native full-text index",
+        transport="calibredb fts_search via Content Server",
+        read_only_commands=["fts_search"])
+    scope.update({
+        "occurrence_coverage": (
+            "Calibre returns a representative match per book format, not "
+            "every occurrence or whole-book text"),
+        "index_completeness_required": "100% accepted by Calibre",
+    })
+    try:
+        command = fts_command_for(
+            executable, server, library_id, username, password_file,
+            book_id=book_id, query=query, exact=exact, timeout=timeout)
+    except ValueError as exc:
+        return error_result(operation, "unavailable", scope, observed_at, str(exc))
+    transport = invoke(command, timeout, runner=runner)
+    if not transport["ok"]:
+        return error_result(
+            operation, transport["status"], scope, observed_at,
+            transport["error"])
+
+    rows = transport["rows"]
+    raw_count = len(rows)
+    truncated = raw_count > limit
+    rows = rows[:limit]
+    records, errors, seen = [], [], set()
+    for index, row in enumerate(rows):
+        try:
+            record = fts_record(
+                row, server, library_id, book_id, observed_at, query)
+            if record["id"] in seen:
+                raise ValueError(
+                    f"duplicate full-text identity: {record['id']}")
+            seen.add(record["id"])
+            records.append(record)
+        except ValueError as exc:
+            errors.append({"row": index, "error": str(exc)})
+    scope.update({"returned": len(records), "raw_rows": raw_count,
+                  "truncated": truncated})
+    status = (
+        "partial" if records and (errors or truncated)
+        else "indeterminate" if errors
+        else "partial" if truncated
+        else "complete")
+    explanation = None
+    if errors:
+        explanation = "one or more native full-text rows could not be represented"
+    elif truncated:
+        explanation = f"more than {limit} format matches were returned"
+    return provider_result(
+        PROVIDER, capability_for(operation), status, scope=scope,
+        freshness={
+            "observed_at": observed_at,
+            "basis": "successful live Calibre full-text query",
+        }, records=records, errors=errors, status_explanation=explanation)
+
+
+def live_annotations_result(server, library_id, username, password_file, *,
+                            book_id, book_format="EPUB", timeout=20,
+                            limit=DEFAULT_LIMIT,
+                            max_book_bytes=DEFAULT_MAX_BOOK_BYTES,
+                            http_get=fetch_bytes, now=utc_now):
+    operation = "annotations"
+    observed_at = now()
+    surface = f"embedded {book_format} copy:{ANNOTATION_MEMBER}"
+    scope = scope_for(
+        operation, server, library_id, limit=limit,
+        authentication="username/password" if username else "none",
+        book_id=book_id, book_format=book_format,
+        max_book_bytes=max_book_bytes, surface=surface,
+        transport="Content Server GET /get/{format}/{book_id}/{library_id}",
+        read_only_commands=["GET book format"])
+    scope.update({
+        "annotation_namespace": "desktop-viewer records embedded in this EPUB copy",
+        "unobserved_namespaces": ["local Calibre annotation database",
+                                  "Content Server web-user annotations"],
+        "absence_meaning": (
+            "no records in the embedded EPUB copy; not proof that all "
+            "Calibre annotation namespaces are empty"),
+        "interface_stability": (
+            "Calibre source-defined Content Server route; not a promised "
+            "public API"),
+    })
+    url = f"{server}/get/{book_format}/{book_id}/{library_id}"
+    transport = http_get(
+        url, server, username, password_file, timeout, max_book_bytes)
+    if not transport.get("ok"):
+        return error_result(
+            operation, transport.get("status", "indeterminate"), scope,
+            observed_at, transport.get("error", "book download failed"))
+    payload = transport.get("bytes")
+    if not isinstance(payload, bytes):
+        return error_result(
+            operation, "indeterminate", scope, observed_at,
+            "successful book GET returned a non-byte representation")
+    scope["downloaded_bytes"] = len(payload)
+    try:
+        annotations, member_present, storage_format, migration = (
+            _decode_embedded_annotations(payload))
+    except ValueError as exc:
+        return error_result(operation, "indeterminate", scope, observed_at, str(exc))
+    scope["annotation_member_present"] = member_present
+    scope["annotation_storage_format"] = storage_format
+    raw_count = migration["observed_rows"]
+    recoverable_count = len(annotations)
+    truncated = recoverable_count > limit
+    annotations = annotations[:limit]
+    scope["raw_rows"] = raw_count
+    scope["recoverable_rows"] = recoverable_count
+    scope["migration_skipped_rows"] = migration["skipped_rows"]
+    scope["migration_skip_reasons"] = migration["skip_reasons"]
+    scope["truncated"] = truncated
+    records, errors, seen = [], [], set()
+    if migration["skipped_rows"]:
+        errors.append({
+            "error": (
+                "one or more legacy annotation rows could not be migrated "
+                "to Calibre's modern annotation representation"),
+            "skipped_rows": migration["skipped_rows"],
+            "skip_reasons": migration["skip_reasons"],
+        })
+    for index, annotation in enumerate(annotations):
+        try:
+            record = annotation_record(
+                annotation, index, server, library_id, book_id,
+                book_format, observed_at)
+            if record["id"] in seen:
+                raise ValueError(
+                    f"duplicate embedded annotation identity: {record['id']}")
+            seen.add(record["id"])
+            records.append(record)
+        except ValueError as exc:
+            errors.append({"row": index, "error": str(exc)})
+    scope["returned"] = len(records)
+    status = (
+        "partial" if records and (errors or truncated)
+        else "indeterminate" if errors
+        else "partial" if truncated
+        else "complete")
+    explanation = None
+    if errors:
+        explanation = "one or more embedded annotation records could not be represented"
+    elif truncated:
+        explanation = f"more than {limit} embedded annotation records were present"
+    return provider_result(
+        PROVIDER, capability_for(operation), status, scope=scope,
+        freshness={
+            "observed_at": observed_at,
+            "basis": "successful bounded GET of the current served EPUB copy",
+        }, records=records, errors=errors, status_explanation=explanation)
+
+
 def stale_fallback(path, live, now=utc_now):
     """Use only an exact prior result, preserving why the live call failed."""
     if not path or live["status"] in {"complete", "partial"}:
@@ -399,8 +1006,11 @@ def stale_fallback(path, live, now=utc_now):
     try:
         prior = json.loads(Path(path).read_text(encoding="utf-8-sig"))
         validate_provider_result(prior)
-        keys = ("operation", "server", "library_id", "query", "limit",
-                "sort_by", "ascending", "authentication")
+        keys = (
+            "operation", "server", "library_id", "query", "limit",
+            "sort_by", "ascending", "authentication", "book_id", "format",
+            "exact", "indexing_threshold", "max_book_bytes", "surface",
+        )
         if prior["provider"] != PROVIDER:
             raise ValueError("fallback comes from a different provider")
         if prior["status"] not in {"complete", "partial"}:
@@ -434,34 +1044,82 @@ def stale_fallback(path, live, now=utc_now):
 def query(operation, *, server=DEFAULT_SERVER, library_id, username=None,
           password_file=None, executable="calibredb", query_text=None,
           limit=DEFAULT_LIMIT, sort_by="last_modified", ascending=False,
-          timeout=20, fallback=None, runner=subprocess.run, now=utc_now):
+          book_id=None, book_format="EPUB", exact=False,
+          max_book_bytes=DEFAULT_MAX_BOOK_BYTES, timeout=20, fallback=None,
+          runner=subprocess.run, http_get=fetch_bytes, now=utc_now):
+    raw_server = server if isinstance(server, str) else str(server)
+    raw_library_id = library_id
+    raw_format = book_format
+    raw_book_id = book_id
     try:
+        if operation not in {"status", "list", "search", "full-text",
+                              "annotations"}:
+            raise ValueError(f"unsupported Calibre operation: {operation}")
         server = validate_server(server)
         library_id = validate_library_id(library_id)
         username, password_file = validate_auth(username, password_file)
         if not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
             raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
-        if operation == "search" and (not isinstance(query_text, str)
-                                       or not query_text.strip()):
-            raise ValueError("search query must be non-empty")
+        if operation in {"search", "full-text"}:
+            if not isinstance(query_text, str) or not query_text.strip():
+                label = "full-text" if operation == "full-text" else "search"
+                raise ValueError(f"{label} query must be non-empty")
+            query_text = query_text.strip()
+        if operation in {"full-text", "annotations"}:
+            book_id = validate_book_id(book_id)
+        if operation == "annotations":
+            book_format = validate_format(book_format)
+            if book_format not in SUPPORTED_ANNOTATION_FORMATS:
+                raise ValueError(
+                    "embedded annotation recovery currently supports EPUB only")
+            if (isinstance(max_book_bytes, bool)
+                    or not isinstance(max_book_bytes, int)
+                    or not 1 <= max_book_bytes <= MAX_MAX_BOOK_BYTES):
+                raise ValueError(
+                    f"max book bytes must be between 1 and {MAX_MAX_BOOK_BYTES}")
     except ValueError as exc:
-        raw_server = server if isinstance(server, str) else str(server)
         authentication = (
             "username/password" if username and password_file
             else "none" if not username and not password_file
             else "incomplete configuration")
         scope = scope_for(
-            operation, raw_server, library_id, query=query_text, limit=limit,
+            operation, raw_server, raw_library_id, query=query_text, limit=limit,
             sort_by=sort_by, ascending=ascending,
-            authentication=authentication)
+            authentication=authentication, book_id=raw_book_id,
+            book_format=raw_format, exact=exact,
+            indexing_threshold=(FTS_INDEXING_THRESHOLD
+                                if operation == "full-text" else None),
+            max_book_bytes=(max_book_bytes
+                            if operation == "annotations" else None))
+        if operation not in {"status", "list", "search", "full-text",
+                              "annotations"}:
+            return provider_result(
+                PROVIDER, "unknown Calibre operation", "unavailable",
+                scope=scope,
+                freshness={"observed_at": now(),
+                           "basis": "input validation failed"},
+                records=[], errors=[{"error": str(exc)}],
+                status_explanation=str(exc))
         return error_result(operation, "unavailable", scope, now(), str(exc))
 
-    live = live_result(
-        operation, server, library_id, username, password_file,
-        executable=executable,
-        query=query_text if operation == "search" else None,
-        limit=limit, sort_by=sort_by, ascending=ascending, timeout=timeout,
-        runner=runner, now=now)
+    if operation in {"status", "list", "search"}:
+        live = live_result(
+            operation, server, library_id, username, password_file,
+            executable=executable,
+            query=query_text if operation == "search" else None,
+            limit=limit, sort_by=sort_by, ascending=ascending, timeout=timeout,
+            runner=runner, now=now)
+    elif operation == "full-text":
+        live = live_fts_result(
+            server, library_id, username, password_file,
+            executable=executable, book_id=book_id, query=query_text,
+            limit=limit, exact=exact, timeout=timeout, runner=runner, now=now)
+    else:
+        live = live_annotations_result(
+            server, library_id, username, password_file,
+            book_id=book_id, book_format=book_format, timeout=timeout,
+            limit=limit, max_book_bytes=max_book_bytes,
+            http_get=http_get, now=now)
     return stale_fallback(fallback, live, now=now)
 
 
@@ -492,6 +1150,27 @@ def arguments(argv=None):
     listing = sub.add_parser("list", help="list a bounded set of books")
     searching = sub.add_parser("search", help="run a Calibre metadata search")
     searching.add_argument("query")
+    full_text = sub.add_parser(
+        "full-text",
+        help=("search one book through Calibre's native full-text index; "
+              "returns representative format snippets, not every occurrence"))
+    full_text.add_argument("query")
+    full_text.add_argument("--book-id", type=int, required=True)
+    full_text.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    full_text.add_argument(
+        "--exact", action="store_true",
+        help="do not match related word forms")
+    annotations = sub.add_parser(
+        "annotations",
+        help="recover desktop-viewer records embedded in one served EPUB copy")
+    annotations.add_argument("--book-id", type=int, required=True)
+    annotations.add_argument("--limit", type=int, default=MAX_LIMIT)
+    annotations.add_argument(
+        "--format", dest="book_format", default="EPUB",
+        help="book format (currently EPUB only)")
+    annotations.add_argument(
+        "--max-book-bytes", type=int, default=DEFAULT_MAX_BOOK_BYTES,
+        help="maximum in-memory book download (default: %(default)s)")
     for command in (listing, searching):
         command.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
         command.add_argument("--sort-by", choices=sorted(SORT_FIELDS),
@@ -522,6 +1201,11 @@ def main(argv=None):
         limit=getattr(args, "limit", 1),
         sort_by=getattr(args, "sort_by", "last_modified"),
         ascending=getattr(args, "ascending", False),
+        book_id=getattr(args, "book_id", None),
+        book_format=getattr(args, "book_format", "EPUB"),
+        exact=getattr(args, "exact", False),
+        max_book_bytes=getattr(
+            args, "max_book_bytes", DEFAULT_MAX_BOOK_BYTES),
         timeout=args.timeout, fallback=args.fallback)
     emit_json_utf8(result, indent=args.indent)
     return 0 if result["status"] in {"complete", "partial"} else 2

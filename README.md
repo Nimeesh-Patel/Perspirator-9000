@@ -91,7 +91,12 @@ does not remove unrelated agent files. Adding a host adapter is one entry in
 For the local Calibre provider, configure Calibre's built-in Content Server on
 a literal loopback address with local write disabled. The adapter defaults to
 `http://127.0.0.1:8081`, refuses hostnames and non-loopback IPs, never opens
-`metadata.db`, and exposes no mutation command. Run
+`metadata.db`, and exposes no mutation command. It can read metadata, run a
+book-bounded query against Calibre's separately enabled full-text index, and
+recover desktop-viewer records embedded in a bounded EPUB copy. Full-text
+results are representative book-format snippets, not every occurrence or a
+whole-book extraction; embedded records do not stand for every Calibre
+annotation namespace. Run
 `python calibre_query.py --help` for setup requirements and query syntax.
 
 ## Development boundary
