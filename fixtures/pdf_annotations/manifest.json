@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "generator": "generate_fixtures.py",
+  "generator_dependencies": {
+    "pypdf": "6.10.0",
+    "reportlab": "4.4.9"
+  },
+  "fixtures": {
+    "corrupt.pdf": {
+      "bytes": 50,
+      "sha256": "0bcd3e759a0104274814ce30500ca1e9fe8a3737bc66e6777360bdf15442b700",
+      "purpose": "Truncated PDF syntax must fail explicitly as corrupt."
+    },
+    "encrypted.pdf": {
+      "bytes": 3160,
+      "sha256": "8540e0e2a1d4e7c33985d34d05a0c978b358d99e8cf401cc9011483e2d86e682",
+      "purpose": "Password-protected input must fail explicitly as encrypted."
+    },
+    "mixed.pdf": {
+      "bytes": 2008,
+      "sha256": "6580dd53e60c87cb92dd203bd33df601b2682f114fc6ae8e92e9df08978594f8",
+      "purpose": "One recoverable partial highlight, one invalid highlight, one unsupported text note, and one annotation without a subtype."
+    },
+    "standard.pdf": {
+      "bytes": 2501,
+      "sha256": "ce4897dfff3a365eff51a3c87ad88594ce336d79bf938810e2882662951a3a0d",
+      "purpose": "Two valid highlights on labelled pages, one with /NM and Contents and one requiring a derived identity."
+    }
+  }
+}

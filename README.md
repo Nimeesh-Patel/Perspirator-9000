@@ -93,9 +93,16 @@ a literal loopback address with local write disabled. The adapter defaults to
 `http://127.0.0.1:8081`, refuses hostnames and non-loopback IPs, never opens
 `metadata.db`, and exposes no mutation command. It can read metadata, run a
 book-bounded query against Calibre's separately enabled full-text index, and
-recover desktop-viewer records embedded in a bounded EPUB copy. Full-text
-results are representative book-format snippets, not every occurrence or a
-whole-book extraction; embedded records do not stand for every Calibre
+recover desktop-viewer records embedded in a bounded EPUB copy, or standard
+page annotations embedded in a bounded PDF copy. PDF annotations are read-only
+evidence: the PDF remains their canonical owner, page rectangles and
+quadrilaterals remain native anchors, and every annotation gets a unique
+`calibre-pdf://` source locator plus a separate book-level `calibre://` reader
+locator. The provider does not pretend Calibre's reflow viewer can reopen those
+coordinates. A geometry-only mark stays visible as partial provider evidence
+instead of becoming invented source prose. Full-text results are
+representative book-format snippets, not every occurrence or a whole-book
+extraction; embedded records do not stand for every Calibre or external-reader
 annotation namespace. Run
 `python calibre_query.py --help` for setup requirements and query syntax.
 
@@ -107,10 +114,18 @@ criterion, current project knowledge, or run evidence. Do not maintain the same
 current rule in both places: code should load or validate Markdown-owned
 configuration instead of paraphrasing it.
 
-The standard library is sufficient for structural, provider, source, and
-transaction tools. Neighbour retrieval additionally uses `numpy`, `torch`, and
+The standard library is sufficient for structural, EPUB-provider, source, and
+transaction tools. Native PDF annotation recovery additionally uses the
+explicit dependency in `requirements-pdf.txt`; without it only that capability
+reports `unavailable`. Neighbour retrieval uses `numpy`, `torch`, and
 `transformers`. Obsidian CLI is an optional provider, not an installation
 prerequisite.
+
+Install the bounded PDF annotation dependency with:
+
+```bash
+python -m pip install --user --requirement requirements-pdf.txt
+```
 
 Run the complete repository suite with:
 

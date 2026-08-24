@@ -1,6 +1,7 @@
 """Offline contract tests for the read-only Calibre provider."""
 
 import base64
+import hashlib
 import io
 import json
 import subprocess
@@ -12,6 +13,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import calibre_query as cq
+import source_to_notes as stn
+from contracts import validate_source_record
 
 
 NOW = "2026-08-18T12:00:00Z"
@@ -80,6 +83,12 @@ class CalibreQueryTests(unittest.TestCase):
             "--book-id", "82", "--format", "EPUB"])
         self.assertEqual(annotations.operation, "annotations")
         self.assertEqual(annotations.limit, cq.MAX_LIMIT)
+        pdf_annotations = cq.arguments([
+            "--library-id", "Calibre_Library", "annotations",
+            "--book-id", "81", "--format", "pdf"])
+        self.assertEqual(pdf_annotations.book_format, "PDF")
+        self.assertEqual(pdf_annotations.max_pdf_pages,
+                         cq.DEFAULT_MAX_PDF_PAGES)
 
     def test_non_loopback_targets_are_refused_before_running_calibredb(self):
         calls = []
@@ -550,6 +559,233 @@ class CalibreQueryTests(unittest.TestCase):
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["records"], [])
         self.assertIn("HTTP 404", result["errors"][0]["error"])
+
+    def test_pdf_annotations_preserve_native_page_geometry_quote_and_note(self):
+        native = {
+            "subtype": "Highlight",
+            "page_index": 4,
+            "page_number": 5,
+            "page_label": "xiii",
+            "page_rotation": 0,
+            "media_box": [0, 0, 612, 792],
+            "crop_box": [0, 0, 612, 792],
+            "coordinate_space": "PDF default user space",
+            "rect": [72, 700, 240, 714],
+            "quad_points": [[72, 714, 240, 714, 72, 700, 240, 700]],
+            "native_id": "sumatra-mark-1",
+            "derived_identity": "unused-derived-id",
+            "identity_source": "NM",
+            "quote": "space tells matter how to move",
+            "contents": "Wheeler formulation",
+            "created": "2026-08-24T10:00:00+05:30",
+            "modified": "2026-08-24T10:01:00+05:30",
+            "color": [1, 1, 0],
+            "opacity": 0.5,
+            "completeness": "complete",
+        }
+
+        def parser(payload, **bounds):
+            self.assertEqual(payload, b"%PDF-fixture")
+            self.assertEqual(bounds["max_pages"], cq.DEFAULT_MAX_PDF_PAGES)
+            self.assertEqual(
+                bounds["max_annotations"], cq.DEFAULT_MAX_PDF_ANNOTATIONS)
+            return {
+                "records": [native], "page_count": 7,
+                "observed_rows": 1, "unsupported_rows": 0,
+                "unsupported_subtypes": {}, "malformed_rows": 0,
+                "malformed_reasons": {}, "warnings": [],
+                "pages_with_annotations": [4],
+                "annotation_surface_present": True,
+                "parser": "fixture-parser",
+            }
+
+        result = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-fixture"), pdf_parser=parser)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["scope"]["annotation_storage_format"],
+                         "PDF page /Annots")
+        self.assertEqual(result["scope"]["raw_rows"], 1)
+        record = result["records"][0]
+        self.assertEqual(record["quote"], native["quote"])
+        self.assertEqual(record["note"], native["contents"])
+        self.assertEqual(record["position"], "pdf-page:5")
+        self.assertEqual(record["position_data"]["quad_points"],
+                         native["quad_points"])
+        self.assertEqual(record["provider_identity"]["native_annotation_id"],
+                         "sumatra-mark-1")
+        self.assertEqual(
+            record["reader_locator"],
+            "calibre://show-book/Calibre_Library/81")
+        self.assertTrue(record["locator"].startswith(
+            "calibre-pdf://annotation/Calibre_Library/81/"))
+        self.assertEqual(urlsplit(record["locator"]).query, "")
+        self.assertEqual(
+            record["provenance"]["representation_sha256"],
+            hashlib.sha256(b"%PDF-fixture").hexdigest())
+        self.assertIs(validate_source_record(record), record)
+
+    def test_pdf_annotations_report_unsupported_and_incomplete_without_false_empty(self):
+        note_only = {
+            "subtype": "Highlight", "page_index": 0, "page_number": 1,
+            "page_label": None, "rect": [10, 10, 20, 20],
+            "quad_points": [[10, 20, 20, 20, 10, 10, 20, 10]],
+            "native_id": None, "derived_identity": "geometry-1",
+            "identity_source": "geometry-fingerprint", "quote": "",
+            "contents": "Geometry-only reader note", "completeness": "partial",
+            "completeness_explanation": (
+                "highlight geometry intersects no recoverable text layer"),
+        }
+        geometry_only = dict(
+            note_only, contents="", derived_identity="geometry-2")
+
+        def parser(_payload, **_bounds):
+            return {
+                "records": [note_only, geometry_only], "page_count": 1,
+                "observed_rows": 3, "unsupported_rows": 1,
+                "unsupported_subtypes": {"Link": 1},
+                "malformed_rows": 0, "malformed_reasons": {},
+                "warnings": [], "pages_with_annotations": [0],
+                "annotation_surface_present": True,
+                "parser": "fixture-parser",
+            }
+
+        result = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-fixture"), pdf_parser=parser)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(len(result["records"]), 1)
+        self.assertFalse(result["records"][0]["source_text_available"])
+        self.assertTrue(result["records"][0]["reader_note_available"])
+        self.assertEqual(
+            result["records"][0]["note"], "Geometry-only reader note")
+        geometry_errors = [
+            error for error in result["errors"]
+            if error.get("annotation_evidence", {}).get(
+                "derived_identity") == "geometry-2"]
+        self.assertEqual(len(geometry_errors), 1)
+        self.assertIn("no recoverable quote", geometry_errors[0]["error"])
+        self.assertEqual(
+            geometry_errors[0]["annotation_evidence"]["page_number"], 1)
+        self.assertEqual(
+            geometry_errors[0]["annotation_evidence"]["rect"],
+            geometry_only["rect"])
+        self.assertEqual(
+            geometry_errors[0]["annotation_evidence"]["quad_points"],
+            geometry_only["quad_points"])
+        self.assertEqual(result["scope"]["unsupported_subtypes"], {"Link": 1})
+        self.assertIn("external-reader", result["scope"]["absence_meaning"])
+        self.assertGreaterEqual(len(result["errors"]), 2)
+
+    def test_pdf_annotation_locators_are_unique_but_reader_link_stays_book_level(self):
+        first = {
+            "subtype": "Highlight", "page_index": 0, "page_number": 1,
+            "rect": [10, 10, 20, 20],
+            "quad_points": [10, 20, 20, 20, 10, 10, 20, 10],
+            "native_id": "first", "derived_identity": "unused-first",
+            "identity_source": "pdf:/NM", "quote": "First exact quote.",
+            "contents": "", "completeness": "complete",
+        }
+        second = dict(
+            first, native_id="second", derived_identity="unused-second",
+            quote="Second exact quote.")
+
+        def parser(_payload, **_bounds):
+            return {
+                "records": [first, second], "page_count": 1,
+                "observed_rows": 2, "unsupported_rows": 0,
+                "unsupported_subtypes": {}, "malformed_rows": 0,
+                "malformed_reasons": {}, "warnings": [],
+                "pages_with_annotations": [0],
+                "annotation_surface_present": True,
+                "parser": "fixture-parser",
+            }
+
+        result = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-fixture"), pdf_parser=parser)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(len({record["locator"] for record in result["records"]}), 2)
+        self.assertEqual({record["reader_locator"] for record in result["records"]}, {
+            "calibre://show-book/Calibre_Library/81"})
+        self.assertEqual(len(stn.source_records(result)), 2)
+
+    def test_pdf_annotations_distinguish_valid_empty_missing_dependency_and_corruption(self):
+        def empty(_payload, **_bounds):
+            return {
+                "records": [], "page_count": 2, "observed_rows": 0,
+                "unsupported_rows": 0, "unsupported_subtypes": {},
+                "malformed_rows": 0, "malformed_reasons": {},
+                "warnings": [], "pages_with_annotations": [],
+                "annotation_surface_present": False,
+                "parser": "fixture-parser",
+            }
+
+        valid = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-empty"), pdf_parser=empty)
+        self.assertEqual(valid["status"], "complete")
+        self.assertEqual(valid["records"], [])
+        self.assertIn("served PDF", valid["scope"]["absence_meaning"])
+
+        def missing(_payload, **_bounds):
+            raise cq.PDFDependencyUnavailable("pdfplumber is not installed")
+
+        unavailable = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-empty"), pdf_parser=missing)
+        self.assertEqual(unavailable["status"], "unavailable")
+        self.assertIn("pdfplumber", unavailable["errors"][0]["error"])
+
+        def corrupt(_payload, **_bounds):
+            raise cq.PDFExtractionError("PDF cross-reference is unreadable")
+
+        indeterminate = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-broken"), pdf_parser=corrupt)
+        self.assertEqual(indeterminate["status"], "indeterminate")
+        self.assertEqual(indeterminate["records"], [])
+
+        def encrypted(_payload, **_bounds):
+            raise cq.PDFExtractionError(
+                "PDF requires a password", code="encrypted")
+
+        unavailable_encrypted = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-encrypted"), pdf_parser=encrypted)
+        self.assertEqual(unavailable_encrypted["status"], "unavailable")
+        self.assertEqual(
+            unavailable_encrypted["errors"][0]["code"], "pdf_encrypted")
+
+        def page_bounded(_payload, **_bounds):
+            return {
+                "records": [], "page_count": 3000, "observed_rows": 0,
+                "unsupported_rows": 0, "unsupported_subtypes": {},
+                "malformed_rows": 0, "malformed_reasons": {},
+                "warnings": ["page bound reached"],
+                "pages_with_annotations": [],
+                "annotation_surface_present": False,
+                "truncated": {"pages": True, "annotations": False},
+                "parser": "fixture-parser",
+            }
+
+        bounded = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            http_get=fetched(b"%PDF-large"), pdf_parser=page_bounded)
+        self.assertEqual(bounded["status"], "partial")
+        self.assertTrue(bounded["scope"]["truncated"])
+        self.assertEqual(bounded["scope"]["pdf_truncated"], {
+            "pages": True, "annotations": False})
+
+    def test_pdf_annotation_bounds_are_validated_before_fetch(self):
+        calls = []
+        result = self.call(
+            "annotations", book_id=81, book_format="PDF",
+            max_pdf_pages=cq.MAX_MAX_PDF_PAGES + 1,
+            http_get=lambda *args: calls.append(args))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("max PDF pages", result["errors"][0]["error"])
+        self.assertEqual(calls, [])
 
     def test_book_get_rejects_redirected_origin_and_declared_oversize(self):
         class Response:

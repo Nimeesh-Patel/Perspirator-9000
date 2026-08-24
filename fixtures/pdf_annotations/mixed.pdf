@@ -1,0 +1,130 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/Producer (Perspirator deterministic fixture generator)
+/Title (Perspirator PDF annotation fixture)
+/Author (Perspirator maintainers)
+/Subject (Deterministic annotation\055parser contract evidence)
+/Creator (fixtures\057pdf\137annotations\057generate\137fixtures\056py)
+/CreationDate (D\07220260824120000\05305\04730\047)
+/ModDate (D\07220260824120000\05305\04730\047)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+4 0 obj
+<<
+/Contents 5 0 R
+/MediaBox [ 0 0 612 792 ]
+/Resources <<
+/Font 6 0 R
+/ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>>
+/Rotate 0
+/Trans <<
+>>
+/Type /Page
+/Parent 2 0 R
+/Annots [ 8 0 R 9 0 R 10 0 R 11 0 R ]
+>>
+endobj
+5 0 obj
+<<
+/Length 145
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+BT /F1 12 Tf 14.4 TL ET
+BT 1 0 0 1 72 720 Tm (Malformed fallback quote and unsupported note.) Tj T* ET
+ 
+
+endstream
+endobj
+6 0 obj
+<<
+/F1 7 0 R
+>>
+endobj
+7 0 obj
+<<
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+/Name /F1
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+8 0 obj
+<<
+/Type /Annot
+/Subtype /Highlight
+/Rect [ 131.012 716 207.052 731 ]
+/NM (missing\055quad)
+/Contents (Geometry is deliberately partial\056)
+/P 4 0 R
+>>
+endobj
+9 0 obj
+<<
+/Type /Annot
+/Subtype /Highlight
+/Rect [ (not\055a\055number) 700 120 730 ]
+/QuadPoints [ 72 730 120 730 72 717 120 717 ]
+/NM (invalid\055rect)
+/P 4 0 R
+>>
+endobj
+10 0 obj
+<<
+/T (Nimeesh)
+/Subtype /Text
+/Rect [ 40 640 60 660 ]
+/Contents (A standard text note\054 intentionally outside parser scope\056)
+/Open false
+/Flags 0
+/NM (text\055note\055001)
+/P 4 0 R
+>>
+endobj
+11 0 obj
+<<
+/Type /Annot
+/Rect [ 40 600 60 620 ]
+/P 4 0 R
+>>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000405 00000 n 
+0000000464 00000 n 
+0000000513 00000 n 
+0000000740 00000 n 
+0000000936 00000 n 
+0000000967 00000 n 
+0000001074 00000 n 
+0000001242 00000 n 
+0000001416 00000 n 
+0000001622 00000 n 
+trailer
+<<
+/Size 12
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+1690
+%%EOF

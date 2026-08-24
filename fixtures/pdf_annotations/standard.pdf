@@ -1,0 +1,158 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/Producer (Perspirator deterministic fixture generator)
+/Title (Perspirator PDF annotation fixture)
+/Author (Perspirator maintainers)
+/Subject (Deterministic annotation\055parser contract evidence)
+/Creator (fixtures\057pdf\137annotations\057generate\137fixtures\056py)
+/CreationDate (D\07220260824120000\05305\04730\047)
+/ModDate (D\07220260824120000\05305\04730\047)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 2
+/Kids [ 4 0 R 8 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+/PageLabels <<
+/Nums [ 0 <<
+/S /D
+/P (p\055)
+/St 1
+>> ]
+>>
+>>
+endobj
+4 0 obj
+<<
+/Contents 5 0 R
+/MediaBox [ 0 0 612 792 ]
+/Resources <<
+/Font 6 0 R
+/ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>>
+/Rotate 0
+/Trans <<
+>>
+/Type /Page
+/Parent 2 0 R
+/Annots [ 10 0 R ]
+>>
+endobj
+5 0 obj
+<<
+/Length 122
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+BT /F1 12 Tf 14.4 TL ET
+BT 1 0 0 1 72 720 Tm (Alpha beta gamma delta.) Tj T* ET
+ 
+
+endstream
+endobj
+6 0 obj
+<<
+/F1 7 0 R
+>>
+endobj
+7 0 obj
+<<
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+/Name /F1
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+8 0 obj
+<<
+/Contents 9 0 R
+/MediaBox [ 0 0 612 792 ]
+/Resources <<
+/Font 6 0 R
+/ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>>
+/Rotate 0
+/Trans <<
+>>
+/Type /Page
+/Parent 2 0 R
+/Annots [ 11 0 R ]
+>>
+endobj
+9 0 obj
+<<
+/Length 139
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+BT /F1 12 Tf 14.4 TL ET
+BT 1 0 0 1 72 720 Tm (Second page carries a fallback identity.) Tj T* ET
+ 
+
+endstream
+endobj
+10 0 obj
+<<
+/Subtype /Highlight
+/Rect [ 105.02 716 173.716 731 ]
+/QuadPoints [ 106.02 730 172.716 730 106.02 717 172.716 717 ]
+/C [ 1 0.8 0.0 ]
+/NM (highlight\055001)
+/Contents (A separate reader comment\056)
+/T (Nimeesh)
+/CreationDate (D\07220260824120500\05305\04730\047)
+/M (D\07220260824121000\05305\04730\047)
+/CA 0.625
+/Subj (Research highlight)
+/F 4
+/P 4 0 R
+>>
+endobj
+11 0 obj
+<<
+/Subtype /Highlight
+/Rect [ 194.396 716 278.428 731 ]
+/QuadPoints [ 195.396 730 277.428 730 195.396 717 277.428 717 ]
+/C [ 0.2 0.8 0.4 ]
+/T (Nimeesh)
+/CreationDate (D\07220260824121500\05305\04730\047)
+/M (D\07220260824121500\05305\04730\047)
+/CA 1
+/Subj (Research highlight)
+/F 4
+/P 8 0 R
+>>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000405 00000 n 
+0000000470 00000 n 
+0000000578 00000 n 
+0000000786 00000 n 
+0000000959 00000 n 
+0000000990 00000 n 
+0000001097 00000 n 
+0000001305 00000 n 
+0000001495 00000 n 
+0000001871 00000 n 
+trailer
+<<
+/Size 12
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+2183
+%%EOF

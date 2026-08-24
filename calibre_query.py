@@ -4,8 +4,11 @@
 The Calibre GUI owns the live library. This adapter never opens ``metadata.db``
 and never invokes a mutating ``calibredb`` command. Metadata and indexed
 full-text queries use documented ``calibredb`` read surfaces. Desktop-viewer
-annotations are recovered from the bounded EPUB representation served by the
-Content Server, without modifying or unpacking the library book on disk.
+annotations are recovered from a bounded EPUB or PDF representation served by
+the Content Server, without modifying or unpacking the library book on disk.
+EPUB records are Calibre viewer state embedded by Calibre. PDF records are
+standard annotations embedded in the PDF by an external PDF reader; the PDF
+remains their canonical owner.
 
 The Content Server must be configured separately in Calibre to listen only on
 127.0.0.1 (or ::1), with local write disabled. Authentication is optional for
@@ -23,9 +26,14 @@ Examples:
       full-text --book-id 82 Wheeler
     python calibre_query.py --library-id Calibre_Library \
       annotations --book-id 82 --format EPUB
+    python calibre_query.py --library-id Calibre_Library \
+      annotations --book-id 81 --format PDF
 
 Discover the exact Content Server library id once instead of guessing it:
     calibredb list --with-library http://127.0.0.1:8081/#- --for-machine
+
+PDF annotation recovery additionally needs the pinned ``pdfplumber`` runtime:
+    python -m pip install --user --requirement requirements-pdf.txt
 
 Redirect a successful JSON result to a file and pass it later with
 ``--fallback`` if stale evidence is preferable to no evidence. The fallback is
@@ -57,6 +65,15 @@ from urllib.request import (
 )
 
 from contracts import provider_result, validate_provider_result
+from pdf_annotations import (
+    DEFAULT_MAX_ANNOTATIONS as DEFAULT_MAX_PDF_ANNOTATIONS,
+    DEFAULT_MAX_PAGES as DEFAULT_MAX_PDF_PAGES,
+    MAX_MAX_ANNOTATIONS as MAX_MAX_PDF_ANNOTATIONS,
+    MAX_MAX_PAGES as MAX_MAX_PDF_PAGES,
+    PDFDependencyUnavailable,
+    PDFExtractionError,
+    parse_pdf_annotations,
+)
 
 
 PROVIDER = "calibre"
@@ -75,7 +92,7 @@ LEGACY_ANNOTATION_SEPARATOR = "*|!|?|*"
 LEGACY_ANNOTATION_ESCAPE = "esc-text-%&*#%(){}ads19-end-esc"
 LEGACY_CURRENT_PAGE = "calibre_current_page_bookmark"
 LEGACY_TIMESTAMP = "1970-01-01T00:00:00+00:00"
-SUPPORTED_ANNOTATION_FORMATS = {"EPUB"}
+SUPPORTED_ANNOTATION_FORMATS = {"EPUB", "PDF"}
 FIELDS = (
     "title", "authors", "author_sort", "comments", "formats", "identifiers",
     "languages", "last_modified", "pubdate", "publisher", "rating", "series",
@@ -199,7 +216,8 @@ def scope_for(operation, server, library_id, *, query=None, limit=None,
               sort_by=None, ascending=False, authentication="not established",
               book_id=None, book_format=None, exact=False,
               indexing_threshold=None, max_book_bytes=None, surface=None,
-              transport=None, read_only_commands=None):
+              transport=None, read_only_commands=None, max_pdf_pages=None,
+              max_pdf_annotations=None):
     return {
         "operation": operation,
         "server": server,
@@ -215,6 +233,8 @@ def scope_for(operation, server, library_id, *, query=None, limit=None,
         "exact": bool(exact),
         "indexing_threshold": indexing_threshold,
         "max_book_bytes": max_book_bytes,
+        "max_pdf_pages": max_pdf_pages,
+        "max_pdf_annotations": max_pdf_annotations,
         "surface": surface,
         "transport": transport or "calibredb via Content Server",
         "authentication": authentication,
@@ -229,7 +249,7 @@ def capability_for(operation):
         "list": "list books",
         "search": "search book metadata",
         "full-text": "search one book through Calibre's full-text index",
-        "annotations": "recover one EPUB's embedded viewer annotations",
+        "annotations": "recover one book's embedded reading annotations",
     }[operation]
 
 
@@ -499,7 +519,8 @@ def fetch_bytes(url, server, username, password_file, timeout, max_bytes,
             HTTPBasicAuthHandler(manager), HTTPDigestAuthHandler(manager)])
     opener = opener_factory(*handlers)
     request = Request(
-        url, headers={"Accept": "application/epub+zip, application/octet-stream",
+        url, headers={"Accept": ("application/epub+zip, application/pdf, "
+                                  "application/octet-stream"),
                       "User-Agent": "Perspirator-Calibre/1"})
     try:
         with opener.open(request, timeout=timeout) as response:
@@ -755,6 +776,116 @@ def annotation_record(annotation, index, server, library_id, book_id,
     }
 
 
+def pdf_annotation_record(annotation, index, server, library_id, book_id,
+                          observed_at, representation_sha256):
+    """Represent one standard in-file PDF annotation without inventing a CFI.
+
+    The page and quadrilaterals are the durable native anchor. Calibre has no
+    documented external-reader deep link for those coordinates.  The stable
+    source locator therefore identifies the file-owned annotation itself,
+    while ``reader_locator`` honestly opens only the Calibre book record.
+    """
+    if not isinstance(annotation, dict):
+        raise ValueError("PDF annotation record is not an object")
+    page_index = annotation.get("page_index")
+    page_number = annotation.get("page_number")
+    subtype = annotation.get("subtype")
+    if (isinstance(page_index, bool) or not isinstance(page_index, int)
+            or page_index < 0):
+        raise ValueError("PDF annotation has an invalid page index")
+    if (isinstance(page_number, bool) or not isinstance(page_number, int)
+            or page_number != page_index + 1):
+        raise ValueError("PDF annotation has an invalid physical page number")
+    if not isinstance(subtype, str) or not subtype.strip():
+        raise ValueError("PDF annotation has no subtype")
+
+    native_id = annotation.get("native_id")
+    derived_id = annotation.get("derived_identity")
+    if isinstance(native_id, str) and native_id.strip():
+        identity = f"page-{page_index}-native-{native_id.strip()}"
+    elif isinstance(derived_id, str) and derived_id.strip():
+        identity = f"page-{page_index}-derived-{derived_id.strip()}"
+    else:
+        canonical = json.dumps(
+            annotation, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8", errors="strict")
+        identity = (f"page-{page_index}-record-{index}-"
+                    f"{hashlib.sha256(canonical).hexdigest()[:24]}")
+
+    quote_text = annotation.get("quote")
+    contents = annotation.get("contents")
+    quote_text = quote_text.strip() if isinstance(quote_text, str) else ""
+    contents = contents.strip() if isinstance(contents, str) else ""
+    parts = []
+    if quote_text:
+        parts.append(quote_text)
+    if contents:
+        parts.append(f"Reader note: {contents}")
+    if not parts:
+        raise ValueError(
+            "PDF annotation has no recoverable quote or reader note")
+    native_completeness = annotation.get("completeness", "complete")
+    completeness = (
+        "complete" if native_completeness == "complete" else "partial")
+
+    position_data = {
+        "coordinate_space": annotation.get(
+            "coordinate_space", "PDF default user space"),
+        "page_index": page_index,
+        "page_number": page_number,
+        "page_label": annotation.get("page_label"),
+        "rect": annotation.get("rect"),
+        "quad_points": annotation.get("quad_points"),
+        "page_rotation": annotation.get("page_rotation"),
+        "media_box": annotation.get("media_box"),
+        "crop_box": annotation.get("crop_box"),
+    }
+    reader_locator = f"calibre://show-book/{library_id}/{book_id}"
+    source_locator = (
+        "calibre-pdf://annotation/"
+        f"{quote(library_id, safe='')}/{book_id}/{quote(identity, safe='')}")
+    return {
+        "id": (f"calibre:{library_id}:{book_id}:PDF:"
+               f"annotation:{identity}"),
+        "provider_identity": {
+            "library_id": library_id,
+            "book_id": book_id,
+            "format": "PDF",
+            "annotation_id": identity,
+            "native_annotation_id": native_id,
+            "identity_source": annotation.get("identity_source"),
+        },
+        "locator": source_locator,
+        "locator_precision": "file-owned PDF annotation identity",
+        "reader_locator": reader_locator,
+        "reader_locator_precision": "book record only",
+        "text": "\n".join(parts),
+        "quote": quote_text,
+        "note": contents,
+        "source_text_available": bool(quote_text),
+        "reader_note_available": bool(contents),
+        "annotation_type": subtype.strip(),
+        "withdrawal_state": "active",
+        "timestamp": (annotation.get("modified")
+                      or annotation.get("created")),
+        "position": f"pdf-page:{page_number}",
+        "position_data": position_data,
+        "completeness": completeness,
+        "completeness_explanation": annotation.get(
+            "completeness_explanation"),
+        "metadata": dict(annotation),
+        "provenance": {
+            "provider": PROVIDER,
+            "representation": "embedded PDF page /Annots",
+            "representation_sha256": representation_sha256,
+            "server": server,
+            "network_scope": "loopback",
+            "library_id": library_id,
+            "observed_at": observed_at,
+        },
+    }
+
+
 def _max_last_modified(records):
     values = [record.get("last_modified") for record in records
               if isinstance(record.get("last_modified"), str)]
@@ -908,28 +1039,52 @@ def live_annotations_result(server, library_id, username, password_file, *,
                             book_id, book_format="EPUB", timeout=20,
                             limit=DEFAULT_LIMIT,
                             max_book_bytes=DEFAULT_MAX_BOOK_BYTES,
-                            http_get=fetch_bytes, now=utc_now):
+                            max_pdf_pages=DEFAULT_MAX_PDF_PAGES,
+                            max_pdf_annotations=DEFAULT_MAX_PDF_ANNOTATIONS,
+                            http_get=fetch_bytes,
+                            pdf_parser=parse_pdf_annotations, now=utc_now):
     operation = "annotations"
     observed_at = now()
-    surface = f"embedded {book_format} copy:{ANNOTATION_MEMBER}"
+    is_pdf = book_format == "PDF"
+    surface = ("standard PDF page /Annots"
+               if is_pdf else f"embedded EPUB copy:{ANNOTATION_MEMBER}")
     scope = scope_for(
         operation, server, library_id, limit=limit,
         authentication="username/password" if username else "none",
         book_id=book_id, book_format=book_format,
         max_book_bytes=max_book_bytes, surface=surface,
         transport="Content Server GET /get/{format}/{book_id}/{library_id}",
-        read_only_commands=["GET book format"])
-    scope.update({
-        "annotation_namespace": "desktop-viewer records embedded in this EPUB copy",
-        "unobserved_namespaces": ["local Calibre annotation database",
-                                  "Content Server web-user annotations"],
-        "absence_meaning": (
-            "no records in the embedded EPUB copy; not proof that all "
-            "Calibre annotation namespaces are empty"),
-        "interface_stability": (
-            "Calibre source-defined Content Server route; not a promised "
-            "public API"),
-    })
+        read_only_commands=["GET book format"],
+        max_pdf_pages=max_pdf_pages if is_pdf else None,
+        max_pdf_annotations=max_pdf_annotations if is_pdf else None)
+    if is_pdf:
+        scope.update({
+            "annotation_namespace": (
+                "standard annotations embedded in this served PDF copy"),
+            "unobserved_namespaces": [
+                "external-reader private databases and sidecars",
+                "local Calibre annotation database",
+                "Content Server web-user annotations",
+            ],
+            "absence_meaning": (
+                "no supported standard annotations in the served PDF copy; "
+                "unsupported subtypes and external-reader stores remain "
+                "separately reported"),
+            "reader_ownership": (
+                "the PDF file owns saved page geometry; Perspirator only reads"),
+        })
+    else:
+        scope.update({
+            "annotation_namespace": (
+                "desktop-viewer records embedded in this EPUB copy"),
+            "unobserved_namespaces": ["local Calibre annotation database",
+                                      "Content Server web-user annotations"],
+            "absence_meaning": (
+                "no records in the embedded EPUB copy; not proof that all "
+                "Calibre annotation namespaces are empty"),
+        })
+    scope["interface_stability"] = (
+        "Calibre source-defined Content Server route; not a promised public API")
     url = f"{server}/get/{book_format}/{book_id}/{library_id}"
     transport = http_get(
         url, server, username, password_file, timeout, max_book_bytes)
@@ -943,49 +1098,160 @@ def live_annotations_result(server, library_id, username, password_file, *,
             operation, "indeterminate", scope, observed_at,
             "successful book GET returned a non-byte representation")
     scope["downloaded_bytes"] = len(payload)
-    try:
-        annotations, member_present, storage_format, migration = (
-            _decode_embedded_annotations(payload))
-    except ValueError as exc:
-        return error_result(operation, "indeterminate", scope, observed_at, str(exc))
-    scope["annotation_member_present"] = member_present
-    scope["annotation_storage_format"] = storage_format
-    raw_count = migration["observed_rows"]
+    representation_sha256 = hashlib.sha256(payload).hexdigest()
+    scope["representation_sha256"] = representation_sha256
+    parser_errors = []
+    parser_truncated = False
+    if is_pdf:
+        try:
+            extraction = pdf_parser(
+                payload, max_pages=max_pdf_pages,
+                max_annotations=max_pdf_annotations)
+        except PDFDependencyUnavailable as exc:
+            return error_result(
+                operation, "unavailable", scope, observed_at, str(exc))
+        except PDFExtractionError as exc:
+            status = (
+                "unavailable"
+                if exc.code in {"encrypted", "bounds"}
+                else "indeterminate")
+            result = error_result(
+                operation, status, scope, observed_at, str(exc))
+            result["errors"][0]["code"] = f"pdf_{exc.code}"
+            return result
+        except ValueError as exc:
+            return error_result(
+                operation, "indeterminate", scope, observed_at, str(exc))
+        if not isinstance(extraction, dict):
+            return error_result(
+                operation, "indeterminate", scope, observed_at,
+                "PDF annotation parser returned a non-object result")
+        annotations = extraction.get("records")
+        if not isinstance(annotations, list):
+            return error_result(
+                operation, "indeterminate", scope, observed_at,
+                "PDF annotation parser returned non-list records")
+        raw_count = extraction.get("observed_rows", len(annotations))
+        if (isinstance(raw_count, bool) or not isinstance(raw_count, int)
+                or raw_count < len(annotations)):
+            return error_result(
+                operation, "indeterminate", scope, observed_at,
+                "PDF annotation parser returned an invalid observed row count")
+        warnings = extraction.get("warnings", [])
+        if not isinstance(warnings, list):
+            return error_result(
+                operation, "indeterminate", scope, observed_at,
+                "PDF annotation parser returned non-list warnings")
+        pdf_truncation = extraction.get("truncated", {})
+        if pdf_truncation is None:
+            pdf_truncation = {}
+        if (not isinstance(pdf_truncation, dict)
+                or any(not isinstance(value, bool)
+                       for value in pdf_truncation.values())):
+            return error_result(
+                operation, "indeterminate", scope, observed_at,
+                "PDF annotation parser returned invalid truncation state")
+        parser_truncated = any(pdf_truncation.values())
+        parser_errors.extend(
+            item if isinstance(item, dict) else {"error": str(item)}
+            for item in warnings)
+        unsupported_rows = extraction.get("unsupported_rows", 0)
+        unsupported_subtypes = extraction.get("unsupported_subtypes", {})
+        if unsupported_rows:
+            parser_errors.append({
+                "error": "one or more PDF annotation subtypes are unsupported",
+                "unsupported_rows": unsupported_rows,
+                "unsupported_subtypes": unsupported_subtypes,
+            })
+        scope.update({
+            "annotation_surface_present": extraction.get(
+                "annotation_surface_present"),
+            "annotation_storage_format": "PDF page /Annots",
+            "parser": extraction.get("parser"),
+            "page_count": extraction.get("page_count"),
+            "pages_with_annotations": extraction.get(
+                "pages_with_annotations"),
+            "unsupported_rows": unsupported_rows,
+            "unsupported_subtypes": unsupported_subtypes,
+            "pdf_truncated": pdf_truncation,
+        })
+        migration = {
+            "observed_rows": raw_count,
+            "skipped_rows": extraction.get("malformed_rows", 0),
+            "skip_reasons": extraction.get("malformed_reasons", {}),
+        }
+    else:
+        try:
+            annotations, member_present, storage_format, migration = (
+                _decode_embedded_annotations(payload))
+        except ValueError as exc:
+            return error_result(
+                operation, "indeterminate", scope, observed_at, str(exc))
+        scope["annotation_member_present"] = member_present
+        scope["annotation_storage_format"] = storage_format
+        raw_count = migration["observed_rows"]
     recoverable_count = len(annotations)
-    truncated = recoverable_count > limit
+    record_limit_truncated = recoverable_count > limit
+    truncated = parser_truncated or record_limit_truncated
     annotations = annotations[:limit]
     scope["raw_rows"] = raw_count
     scope["recoverable_rows"] = recoverable_count
     scope["migration_skipped_rows"] = migration["skipped_rows"]
     scope["migration_skip_reasons"] = migration["skip_reasons"]
+    scope["record_limit_truncated"] = record_limit_truncated
     scope["truncated"] = truncated
-    records, errors, seen = [], [], set()
+    records, errors, seen = [], list(parser_errors), set()
     if migration["skipped_rows"]:
         errors.append({
             "error": (
-                "one or more legacy annotation rows could not be migrated "
-                "to Calibre's modern annotation representation"),
+                "one or more annotation rows could not be represented"),
             "skipped_rows": migration["skipped_rows"],
             "skip_reasons": migration["skip_reasons"],
         })
     for index, annotation in enumerate(annotations):
         try:
-            record = annotation_record(
-                annotation, index, server, library_id, book_id,
-                book_format, observed_at)
+            if is_pdf:
+                record = pdf_annotation_record(
+                    annotation, index, server, library_id, book_id,
+                    observed_at, representation_sha256)
+            else:
+                record = annotation_record(
+                    annotation, index, server, library_id, book_id,
+                    book_format, observed_at)
             if record["id"] in seen:
                 raise ValueError(
                     f"duplicate embedded annotation identity: {record['id']}")
             seen.add(record["id"])
             records.append(record)
+            if is_pdf and record.get("completeness") != "complete":
+                errors.append({
+                    "row": index,
+                    "error": (record.get("completeness_explanation")
+                              or "PDF annotation extraction is incomplete"),
+                })
         except ValueError as exc:
-            errors.append({"row": index, "error": str(exc)})
+            error = {"row": index, "error": str(exc)}
+            if is_pdf and isinstance(annotation, dict):
+                error["annotation_evidence"] = {
+                    key: annotation.get(key) for key in (
+                        "identity_source", "native_id", "derived_identity",
+                        "page_index", "page_number", "page_label", "subtype",
+                        "rect", "quad_points", "page_rotation", "media_box",
+                        "crop_box", "completeness",
+                        "completeness_explanation", "issues")
+                }
+            errors.append(error)
     scope["returned"] = len(records)
-    status = (
-        "partial" if records and (errors or truncated)
-        else "indeterminate" if errors
-        else "partial" if truncated
-        else "complete")
+    if is_pdf:
+        # A readable PDF with only unsupported or malformed annotation rows is
+        # a partial observation, not proof of absence and not an unknown file.
+        status = "partial" if errors or truncated else "complete"
+    else:
+        status = (
+            "partial" if records and (errors or truncated)
+            else "indeterminate" if errors
+            else "partial" if truncated
+            else "complete")
     explanation = None
     if errors:
         explanation = "one or more embedded annotation records could not be represented"
@@ -995,7 +1261,8 @@ def live_annotations_result(server, library_id, username, password_file, *,
         PROVIDER, capability_for(operation), status, scope=scope,
         freshness={
             "observed_at": observed_at,
-            "basis": "successful bounded GET of the current served EPUB copy",
+            "basis": ("successful bounded GET and read-only parse of the "
+                      f"current served {book_format} copy"),
         }, records=records, errors=errors, status_explanation=explanation)
 
 
@@ -1010,6 +1277,7 @@ def stale_fallback(path, live, now=utc_now):
             "operation", "server", "library_id", "query", "limit",
             "sort_by", "ascending", "authentication", "book_id", "format",
             "exact", "indexing_threshold", "max_book_bytes", "surface",
+            "max_pdf_pages", "max_pdf_annotations",
         )
         if prior["provider"] != PROVIDER:
             raise ValueError("fallback comes from a different provider")
@@ -1046,7 +1314,10 @@ def query(operation, *, server=DEFAULT_SERVER, library_id, username=None,
           limit=DEFAULT_LIMIT, sort_by="last_modified", ascending=False,
           book_id=None, book_format="EPUB", exact=False,
           max_book_bytes=DEFAULT_MAX_BOOK_BYTES, timeout=20, fallback=None,
-          runner=subprocess.run, http_get=fetch_bytes, now=utc_now):
+          max_pdf_pages=DEFAULT_MAX_PDF_PAGES,
+          max_pdf_annotations=DEFAULT_MAX_PDF_ANNOTATIONS,
+          runner=subprocess.run, http_get=fetch_bytes,
+          pdf_parser=parse_pdf_annotations, now=utc_now):
     raw_server = server if isinstance(server, str) else str(server)
     raw_library_id = library_id
     raw_format = book_format
@@ -1071,12 +1342,25 @@ def query(operation, *, server=DEFAULT_SERVER, library_id, username=None,
             book_format = validate_format(book_format)
             if book_format not in SUPPORTED_ANNOTATION_FORMATS:
                 raise ValueError(
-                    "embedded annotation recovery currently supports EPUB only")
+                    "embedded annotation recovery supports EPUB and PDF only")
             if (isinstance(max_book_bytes, bool)
                     or not isinstance(max_book_bytes, int)
                     or not 1 <= max_book_bytes <= MAX_MAX_BOOK_BYTES):
                 raise ValueError(
                     f"max book bytes must be between 1 and {MAX_MAX_BOOK_BYTES}")
+            if book_format == "PDF":
+                if (isinstance(max_pdf_pages, bool)
+                        or not isinstance(max_pdf_pages, int)
+                        or not 1 <= max_pdf_pages <= MAX_MAX_PDF_PAGES):
+                    raise ValueError(
+                        "max PDF pages must be between 1 and "
+                        f"{MAX_MAX_PDF_PAGES}")
+                if (isinstance(max_pdf_annotations, bool)
+                        or not isinstance(max_pdf_annotations, int)
+                        or not 1 <= max_pdf_annotations <= MAX_MAX_PDF_ANNOTATIONS):
+                    raise ValueError(
+                        "max PDF annotations must be between 1 and "
+                        f"{MAX_MAX_PDF_ANNOTATIONS}")
     except ValueError as exc:
         authentication = (
             "username/password" if username and password_file
@@ -1090,7 +1374,15 @@ def query(operation, *, server=DEFAULT_SERVER, library_id, username=None,
             indexing_threshold=(FTS_INDEXING_THRESHOLD
                                 if operation == "full-text" else None),
             max_book_bytes=(max_book_bytes
-                            if operation == "annotations" else None))
+                            if operation == "annotations" else None),
+            max_pdf_pages=(max_pdf_pages
+                           if operation == "annotations"
+                           and isinstance(raw_format, str)
+                           and raw_format.strip().upper() == "PDF" else None),
+            max_pdf_annotations=(max_pdf_annotations
+                                 if operation == "annotations"
+                                 and isinstance(raw_format, str)
+                                 and raw_format.strip().upper() == "PDF" else None))
         if operation not in {"status", "list", "search", "full-text",
                               "annotations"}:
             return provider_result(
@@ -1119,7 +1411,9 @@ def query(operation, *, server=DEFAULT_SERVER, library_id, username=None,
             server, library_id, username, password_file,
             book_id=book_id, book_format=book_format, timeout=timeout,
             limit=limit, max_book_bytes=max_book_bytes,
-            http_get=http_get, now=now)
+            max_pdf_pages=max_pdf_pages,
+            max_pdf_annotations=max_pdf_annotations,
+            http_get=http_get, pdf_parser=pdf_parser, now=now)
     return stale_fallback(fallback, live, now=now)
 
 
@@ -1162,15 +1456,24 @@ def arguments(argv=None):
         help="do not match related word forms")
     annotations = sub.add_parser(
         "annotations",
-        help="recover desktop-viewer records embedded in one served EPUB copy")
+        help=("recover reading annotations embedded in one served EPUB or "
+              "PDF copy"))
     annotations.add_argument("--book-id", type=int, required=True)
     annotations.add_argument("--limit", type=int, default=MAX_LIMIT)
     annotations.add_argument(
-        "--format", dest="book_format", default="EPUB",
-        help="book format (currently EPUB only)")
+        "--format", dest="book_format", default="EPUB", type=str.upper,
+        choices=sorted(SUPPORTED_ANNOTATION_FORMATS),
+        help="book format (default: %(default)s)")
     annotations.add_argument(
         "--max-book-bytes", type=int, default=DEFAULT_MAX_BOOK_BYTES,
         help="maximum in-memory book download (default: %(default)s)")
+    annotations.add_argument(
+        "--max-pdf-pages", type=int, default=DEFAULT_MAX_PDF_PAGES,
+        help="maximum pages parsed from a PDF (default: %(default)s)")
+    annotations.add_argument(
+        "--max-pdf-annotations", type=int,
+        default=DEFAULT_MAX_PDF_ANNOTATIONS,
+        help="maximum annotation objects parsed from a PDF (default: %(default)s)")
     for command in (listing, searching):
         command.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
         command.add_argument("--sort-by", choices=sorted(SORT_FIELDS),
@@ -1206,6 +1509,10 @@ def main(argv=None):
         exact=getattr(args, "exact", False),
         max_book_bytes=getattr(
             args, "max_book_bytes", DEFAULT_MAX_BOOK_BYTES),
+        max_pdf_pages=getattr(
+            args, "max_pdf_pages", DEFAULT_MAX_PDF_PAGES),
+        max_pdf_annotations=getattr(
+            args, "max_pdf_annotations", DEFAULT_MAX_PDF_ANNOTATIONS),
         timeout=args.timeout, fallback=args.fallback)
     emit_json_utf8(result, indent=args.indent)
     return 0 if result["status"] in {"complete", "partial"} else 2
