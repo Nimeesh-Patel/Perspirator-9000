@@ -71,7 +71,7 @@ class PDFAnnotationExtractionTests(unittest.TestCase):
         self.assertEqual(first["contents"], "A separate reader comment.")
         self.assertEqual(first["quote_completeness"], "complete")
         self.assertEqual(first["quote_method"], "quad_points")
-        self.assertEqual(first["author"], "Nimeesh")
+        self.assertEqual(first["author"], "Fixture Author")
         self.assertEqual(first["color"], [1, 0.8, 0.0])
         self.assertEqual(first["opacity"], 0.625)
         self.assertEqual(first["creation_date"], "D:20260824120500+05'30'")

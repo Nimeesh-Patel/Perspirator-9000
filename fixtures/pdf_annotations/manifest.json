@@ -12,18 +12,18 @@
       "purpose": "Truncated PDF syntax must fail explicitly as corrupt."
     },
     "encrypted.pdf": {
-      "bytes": 3160,
-      "sha256": "8540e0e2a1d4e7c33985d34d05a0c978b358d99e8cf401cc9011483e2d86e682",
+      "bytes": 3188,
+      "sha256": "609cb46ead759bbee3481cfc35096ddc6b317431c9267f14147e53ad2efbd2da",
       "purpose": "Password-protected input must fail explicitly as encrypted."
     },
     "mixed.pdf": {
-      "bytes": 2008,
-      "sha256": "6580dd53e60c87cb92dd203bd33df601b2682f114fc6ae8e92e9df08978594f8",
+      "bytes": 2015,
+      "sha256": "65f814794d80633a80011df868c1b8828553d5e854691e713e70a155ae7bcf1d",
       "purpose": "One recoverable partial highlight, one invalid highlight, one unsupported text note, and one annotation without a subtype."
     },
     "standard.pdf": {
-      "bytes": 2501,
-      "sha256": "ce4897dfff3a365eff51a3c87ad88594ce336d79bf938810e2882662951a3a0d",
+      "bytes": 2515,
+      "sha256": "d2884b3f883f1d9e2d89b5559b9dd685164acf984b99abf94f57fc2468ee651f",
       "purpose": "Two valid highlights on labelled pages, one with /NM and Contents and one requiring a derived identity."
     }
   }

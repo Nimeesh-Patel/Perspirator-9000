@@ -138,7 +138,7 @@ def _standard_pdf() -> bytes:
         first_highlight,
         native_id="highlight-001",
         contents="A separate reader comment.",
-        author="Nimeesh",
+        author="Fixture Author",
         creation="D:20260824120500+05'30'",
         modified="D:20260824121000+05'30'",
         opacity=0.625,
@@ -152,7 +152,7 @@ def _standard_pdf() -> bytes:
         second_highlight,
         native_id=None,
         contents=None,
-        author="Nimeesh",
+        author="Fixture Author",
         creation="D:20260824121500+05'30'",
         modified="D:20260824121500+05'30'",
         opacity=1,
@@ -194,7 +194,7 @@ def _mixed_pdf() -> bytes:
     unsupported = Text(
         rect=(40, 640, 60, 660),
         text="A standard text note, intentionally outside parser scope.",
-        title_bar="Nimeesh",
+        title_bar="Fixture Author",
     )
     unsupported[NameObject("/NM")] = TextStringObject("text-note-001")
     writer.add_annotation(0, unsupported)

@@ -18,6 +18,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from adapters import add_vault_argument  # noqa: E402
 from note_chunks import (bullets, chunks_for_note, extract_links,  # noqa: E402
                          frontmatter_fields, iter_notes, read_note, section,
                          vault_links)
@@ -265,7 +266,7 @@ def snippet(text):
     A snippet used to be truncated twice — stored at 220 characters, then cut
     again to 170 when printed by `match` and 150 by `pairs` — with no mark
     either time. A reader could not tell a short problem from a long one
-    silently beheaded, and Nimeesh's own hand evaluation of a pairs run called
+    silently beheaded, and the recorded hand evaluation of a pairs run called
     14 of 43 candidates truncated, 11 of those unjudgeable because of it.
 
     One limit, stated once, and an ellipsis so the cut is visible.
@@ -703,7 +704,7 @@ def lexical_scores(query_text, meta, eligible, cosine):
 def merge_rankers(eligible, meta, cosine, lexical, limit, mode):
     """Two independent rankers, interleaved, with provenance kept.
 
-    Nimeesh's 2026 blind comparison found cosine and lexical surfacing
+    The 2026 blind comparison found cosine and lexical surfacing
     *different* pairs at roughly equal precision, and on this corpus their
     top-10 sets still overlap by only 7%. Choosing one therefore discards
     most of the other's recall — which is what happened, since lexical
@@ -1024,13 +1025,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_index = sub.add_parser("index", help="embed retrieval units into a disposable index")
-    p_index.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(p_index)
     p_index.add_argument("--out")
     p_index.add_argument("--rebuild", action="store_true")
     p_index.set_defaults(func=cmd_index)
 
     p_match = sub.add_parser("match", help="rank units, collapse notes, expand context")
-    p_match.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(p_match)
     p_match.add_argument("--rank", choices=("both", "embedding", "lexical"),
                          default="both",
                          help="which rankers nominate candidates")
@@ -1053,14 +1054,14 @@ def main():
     p_match.set_defaults(func=cmd_match)
     p_drift = sub.add_parser(
         "drift", help="units whose meaning moved, and what links to them")
-    p_drift.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(p_drift)
     p_drift.add_argument("--since", help="YYYY-MM-DD")
     p_drift.add_argument("--k", type=int, default=15)
     p_drift.set_defaults(func=cmd_drift)
 
     p_pairs = sub.add_parser(
         'pairs', help='rank filtered note pairs; make no identity judgment')
-    p_pairs.add_argument('--vault', default=str(Path.home() / 'nimeesh vault'))
+    add_vault_argument(p_pairs)
     p_pairs.add_argument('--index')
     p_pairs.add_argument('--corpus', choices=('memory', 'vault', 'all'),
                          default='vault')

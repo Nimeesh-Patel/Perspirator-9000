@@ -90,7 +90,7 @@ def source_records(payload):
         except ValueError as exc:
             raise ValueError(f"source {index}: {exc}") from exc
         source_id = record["id"].strip()
-        locator = record["locator"].strip()
+        locator = record["locator"]
         if source_id in by_id:
             raise ValueError(f"duplicate source id in bundle: {source_id}")
         if locator in seen_locators:
@@ -98,8 +98,7 @@ def source_records(payload):
                 f"sources {seen_locators[locator]} and {source_id} share "
                 f"locator {locator}")
         seen_locators[locator] = source_id
-        by_id[source_id] = dict(record, id=source_id,
-                               text=record["text"].strip(), locator=locator)
+        by_id[source_id] = dict(record, id=source_id, locator=locator)
     return by_id
 
 

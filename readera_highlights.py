@@ -119,8 +119,8 @@ def source_text(body, annotation):
     """Keep the quoted passage and the reader's annotation distinguishable.
 
     Both are source material, but one is the book's sentence and the other is
-    Nimeesh's conjecture about it. Flattening them into one stream produces a
-    record that cannot say whose claim it is.
+    the researcher's conjecture about it. Flattening them into one stream
+    produces a record that cannot say whose claim it is.
     """
     block = quote_block(body)
     if annotation:

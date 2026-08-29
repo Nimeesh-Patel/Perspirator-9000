@@ -11,6 +11,7 @@ import json
 import sys
 from pathlib import Path
 
+from adapters import add_vault_argument
 from note_chunks import frontmatter_fields, read_note, section
 
 POLICY_DIR = ("memory", "policies")
@@ -70,7 +71,7 @@ def active_policy_surface(vault):
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(parser)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 

@@ -37,6 +37,17 @@ class InstallationOwnershipTests(unittest.TestCase):
             problems = manifest_problems(root, ["one.py", "two.py"])
             self.assertIn("two.py", problems[0])
 
+    def test_manifest_owns_nested_generated_files(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            nested = root / "fixtures" / "contract.json"
+            nested.parent.mkdir()
+            nested.write_text("{}", encoding="utf-8")
+            write_manifest(root, ["fixtures/contract.json"])
+
+            self.assertEqual(
+                manifest_problems(root, ["fixtures/contract.json"]), [])
+
 
 if __name__ == "__main__":
     unittest.main()

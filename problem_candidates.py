@@ -20,6 +20,7 @@ PROBLEMISH = re.compile(r"problem|conflict|criticism|question", re.I)
 
 # One structural parser for the whole toolkit; see note_chunks.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from adapters import add_vault_argument  # noqa: E402
 from note_chunks import (all_chunks, bullets, read_note as read,  # noqa: E402
                          section, vault_links)
 from neighbour import (content_words, inverse_document_frequency,  # noqa: E402
@@ -181,7 +182,7 @@ def signal_never_written(vault, min_referrers):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(parser)
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-refresh", action="store_true",

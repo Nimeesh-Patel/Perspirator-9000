@@ -28,7 +28,7 @@ class CleanupPartitionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             parent = self._parent(Path(tmp))
             child = derive_manifest(parent, ["first"], "permanent",
-                                    "Nimeesh selected the first group.")
+                                    "The operator selected the first group.")
             self.assertEqual(child["total_bytes"], 3)
             self.assertEqual(child["disposition"], "permanent")
             self.assertEqual(child["derived_from_manifest_sha256"],

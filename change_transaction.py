@@ -11,9 +11,6 @@ import hashlib
 from pathlib import Path
 
 
-STATUSES = {"planned", "applied", "partial", "indeterminate", "error"}
-
-
 def sha256_bytes(payload):
     return hashlib.sha256(payload).hexdigest()
 

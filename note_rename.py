@@ -8,6 +8,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
+from adapters import add_vault_argument
 from note_chunks import DEFAULT_EXCLUDES
 from obsidian_cli import ObsidianCLI
 from change_transaction import (identity_operation, observe_identity,
@@ -167,7 +168,7 @@ def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("old", help="exact vault-relative old note path")
     parser.add_argument("new_name", help="new filename, with optional .md")
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(parser)
     parser.add_argument("--executable", default="obsidian")
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--apply", action="store_true",

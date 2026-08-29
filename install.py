@@ -3,9 +3,9 @@
 
 One installer for every platform; the adapter table lives in adapters.py.
 Examples:
-    python install.py --target ClaudeCode
+    python install.py --target ClaudeCode --vault "D:\\My Vault"
     python install.py --target All --vault "D:\\My Vault"
-    python install.py --target Custom --destination "D:\\agent prompts"
+    python install.py --target Custom --vault "D:\\My Vault" --destination "D:\\agent prompts"
 """
 
 import argparse
@@ -13,7 +13,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from adapters import (ADAPTERS, SCRIPT_NAMES, absolute, parse_target, render,
+from adapters import (ADAPTERS, SHARED_FILES, TARGETS, adapter_directories,
+                      add_adapter_directory_arguments, add_vault_argument,
+                      absolute, generated_files, parse_target, render,
                       selected_keys)
 from installation import retire_stale_owned_files, write_manifest
 
@@ -32,19 +34,17 @@ def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", type=target_type, default="ClaudeCode",
-                        help="ClaudeCode (default), Codex, All, or Custom")
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"),
-                        help="Obsidian vault root")
+                        help=f"one of {', '.join(TARGETS)} (default: ClaudeCode)")
+    add_vault_argument(parser)
     parser.add_argument("--destination",
                         help="required for Custom; overrides a single target")
-    parser.add_argument("--claude-dir", default=str(ADAPTERS["ClaudeCode"]["default_dir"]))
-    parser.add_argument("--codex-dir", default=str(ADAPTERS["Codex"]["default_dir"]))
+    add_adapter_directory_arguments(parser, include_custom=False)
     return parser.parse_args()
 
 
 def destinations(args):
     """[(key, directory)] for the selected target."""
-    overrides = {"ClaudeCode": args.claude_dir, "Codex": args.codex_dir}
+    overrides = adapter_directories(args)
     keys = selected_keys(args.target)
     if args.target == "All" and args.destination:
         raise SystemExit("error: --destination is valid only with a single target")
@@ -77,10 +77,12 @@ def main():
     template = (repo / "SKILL.md").read_text(encoding="utf-8")
     for key, directory in jobs:
         directory.mkdir(parents=True, exist_ok=True)
-        desired = [*SCRIPT_NAMES, ADAPTERS[key]["filename"]]
+        desired = generated_files(key)
         retired = retire_stale_owned_files(directory, desired)
-        for script in SCRIPT_NAMES:
-            shutil.copyfile(repo / script, directory / script)
+        for relative in SHARED_FILES:
+            destination = directory / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(repo / relative, destination)
         adapter = directory / ADAPTERS[key]["filename"]
         adapter.write_text(render(template, vault, directory),
                            encoding="utf-8", newline="\n")
@@ -90,12 +92,10 @@ def main():
 
     print("Installed; unrelated files and modified retired outputs were not removed.")
     doctor = repo / "doctor.py"
-    flags = {"ClaudeCode": "--claude-dir", "Codex": "--codex-dir",
-             "Custom": "--custom-dir"}
     for key, directory in jobs:
         print(f"  {ADAPTERS[key]['label']}: {ADAPTERS[key]['invoke']}")
         print(f'  Validate: python "{doctor}" --target {key} --vault "{vault}" '
-              f'{flags[key]} "{directory}"')
+              f'{ADAPTERS[key]["directory_option"]} "{directory}"')
     return 0
 
 

@@ -13,7 +13,7 @@ def validate_contract_copies(source_dir, home=None):
     source_dir = Path(source_dir)
     config_path = source_dir / "contract_copies.json"
     if not config_path.is_file():
-        return []
+        return [f"contract copy declaration missing: {config_path}"]
     config = load_json(config_path)
     home = Path(home or Path.home())
     problems = []

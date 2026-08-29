@@ -15,8 +15,8 @@ def source_record(source_id, text, locator, *, provider, completeness="complete"
                   withdrawal_state="active", provenance=None, **fields):
     record = {
         "id": str(source_id).strip(),
-        "text": text.strip() if isinstance(text, str) else text,
-        "locator": locator.strip() if isinstance(locator, str) else locator,
+        "text": text,
+        "locator": locator,
         "provenance": provenance or {"provider": provider},
         "completeness": completeness,
         "withdrawal_state": withdrawal_state,
@@ -39,7 +39,8 @@ def validate_source_record(record):
         raise ValueError("source record id is empty")
     if not isinstance(record["text"], str) or not record["text"].strip():
         raise ValueError(f"source {record['id']} text is empty")
-    if not isinstance(record["locator"], str) or not LOCATOR.match(record["locator"]):
+    if (not isinstance(record["locator"], str)
+            or not LOCATOR.fullmatch(record["locator"])):
         raise ValueError(f"source {record['id']} needs a locator URI")
     provenance = record["provenance"]
     if (not isinstance(provenance, dict)

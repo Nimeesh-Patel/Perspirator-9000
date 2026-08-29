@@ -3,8 +3,9 @@
 Perspirator is a portable institution for criticism, error correction, and
 delegating mechanical work to tools around an Obsidian vault of `***` Problem
 Notes. Its explanatory heart is the **Theory of LLMs** in the vault runtime:
-Nimeesh supplies problems, criticism, and new explanatory knowledge; agents and
-scripts perform perspiration over the knowledge and criteria he supplies.
+the human collaborator supplies problems, criticism, and new explanatory
+knowledge; agents and scripts perform perspiration over that knowledge and
+those criteria.
 
 This repository is not the institution's current theory. It packages its
 repeatable mechanisms and thin host adapters. The vault supplies the live
@@ -44,7 +45,7 @@ Bootstrap.md ──> active runtime + relevant policies
 agent draws out implications, assumptions, consequences, and conflicts
         |
         v
-Nimeesh criticises or creates knowledge; permitted changes are validated
+human collaborator criticises or creates knowledge; permitted changes are validated
 ```
 
 There is no hidden daemon. Editing the vault runtime or a policy changes the
@@ -56,9 +57,10 @@ reinstall because installation copies the toolkit.
 Whole-computer scope is a federation of bounded native providers, not one
 universal database or global scan. Calibre, Anki, Obsidian, a filesystem, a
 browser session, and a source platform retain their distinct facts and failure
-modes. A provider result makes its target, scope, freshness, completeness,
-status, records, and unobserved boundary inspectable; it does not decide which
-fact matters or create an explanatory relation.
+modes. Shared provider results expose target, scope, freshness, completeness,
+status, records, and unobserved boundaries. Adapters with native-specific
+result shapes keep their observed data and failure state explicit; no provider
+decides which fact matters or creates an explanatory relation.
 
 Repository mechanisms currently cover four broad jobs:
 
@@ -85,8 +87,10 @@ requires `--destination`; directory overrides are available through
 `--claude-dir`, `--codex-dir`, and `--destination`.
 
 Installation replaces only files named in Perspirator's generated manifest. It
-does not remove unrelated agent files. Adding a host adapter is one entry in
-`adapters.py`, which is shared by installation and validation.
+does not remove unrelated agent files. The adapter declaration in `adapters.py`
+owns host names, aliases, directories, invocation text, and validation options.
+The same module owns the shared relative-file install surface, including
+contract declarations and canonical fixtures.
 
 For the local Calibre provider, configure Calibre's built-in Content Server on
 a literal loopback address with local write disabled. The adapter defaults to

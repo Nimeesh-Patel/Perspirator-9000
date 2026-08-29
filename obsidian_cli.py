@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+from adapters import add_vault_argument
+
 READ_ONLY = {
     "aliases", "backlinks", "base:query", "bases", "deadends", "file",
     "files", "folder", "folders", "help", "history", "history:list",
@@ -161,7 +163,7 @@ class ObsidianCLI:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(parser)
     parser.add_argument("--timeout", type=float, default=5)
     parser.add_argument("--limit", type=int, default=5)
     sub = parser.add_subparsers(dest="action", required=True)

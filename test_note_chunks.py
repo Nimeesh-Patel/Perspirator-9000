@@ -82,6 +82,7 @@ def main():
         p_fence = build(root, "fenced.md", FENCED)
         build(root, ".trash/ignored.md", PROBLEM_NOTE)
         build(root, "Attachments/skip.md", PROBLEM_NOTE)
+        build(root, "Interesting/Templates/default.md", "---\ntags: []\n---\n\n***\n")
 
         parsed = parse_note(PROBLEM_NOTE)
         check("shared parser exposes both sides", parsed["problem"].startswith("why is")
@@ -197,8 +198,9 @@ zeta eta theta iota kappa.
         indexed = json.loads(subprocess.run(
             [sys.executable, str(Path(__file__).parent / "problem_index.py"), str(root)],
             capture_output=True, text=True, check=True).stdout)
-        check("problem index excludes rollback snapshots",
+        check("problem index contains only root Problem Notes",
               not any(item["path"].startswith(".perspirator/") for item in indexed)
+              and not any("/" in item["path"] for item in indexed)
               and any(item["path"] == "asking dumb questions.md" for item in indexed),
               str([item["path"] for item in indexed]))
         check("excluded folders are skipped",

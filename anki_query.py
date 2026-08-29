@@ -2,7 +2,7 @@
 """Bounded, read-only AnkiConnect context for Perspirator mechanisms.
 
 Anki holds facts no other provider has: which cards exist, what a card's
-current fields say, and what its review history is. Those are evidence about
+current fields say, and its current scheduling aggregates. Those are evidence about
 the vault's external consumer, and they have already refuted vault-side
 conjectures — on 2026-08-05 the card fronts were what showed that a
 frontmatter block had leaked into flashcards.

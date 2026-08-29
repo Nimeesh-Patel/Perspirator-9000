@@ -12,9 +12,10 @@ run. This is a feedback-speed boundary, not a claim that code is theory-free.
 Do not duplicate a current semantic rule in code and Markdown: code should load
 and validate the Markdown-owned rule.
 
-Install with `python install.py --target <ClaudeCode|Codex|All|Custom>`;
-`Custom` also needs `--destination`. The adapter table lives in `adapters.py`,
-so adding an agent is one row there.
+Install with `python install.py --target <ClaudeCode|Codex|All|Custom> --vault
+<path>` or set `PERSPIRATOR_VAULT`; `Custom` also needs `--destination`. The
+adapter table lives in `adapters.py`, so adding a first-class host is one
+declaration there.
 
 Python 3 is required for the structural tools. `neighbour.py` additionally
 needs numpy, torch, and transformers, which nothing else imports. Tests are

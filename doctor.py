@@ -6,7 +6,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from adapters import (ADAPTERS, FIRST_CLASS, SCRIPT_NAMES, absolute,
+from adapters import (ADAPTERS, FIRST_CLASS, SHARED_FILES, TARGETS,
+                      adapter_directories, add_adapter_directory_arguments,
+                      add_vault_argument, absolute, generated_files,
                       parse_target, render, selected_keys, slash)
 
 RESULTS = []
@@ -173,10 +175,10 @@ def orphan_census_partition(vault, notes):
 NOT_SHIPPED = {"install.py"}
 
 
-def validate_shared_scripts(source_dir):
+def validate_shared_files(source_dir):
     print("\nShared structural toolkit")
-    for name in SCRIPT_NAMES:
-        check(f"source script exists: {name}", (source_dir / name).is_file(),
+    for name in SHARED_FILES:
+        check(f"shared source exists: {name}", (source_dir / name).is_file(),
               str(source_dir / name))
 
     # The manifest is hand-maintained, so the invariant it exists to protect —
@@ -185,7 +187,9 @@ def validate_shared_scripts(source_dir):
     # simply never installed and every listed check still passes.
     present = {path.name for path in source_dir.glob("*.py")
                if not path.name.startswith("test_")} - NOT_SHIPPED
-    unlisted = sorted(present - set(SCRIPT_NAMES))
+    listed_scripts = {name for name in SHARED_FILES if "/" not in name
+                      and name.endswith(".py")}
+    unlisted = sorted(present - listed_scripts)
     check("every source script is listed for install", not unlisted,
           "unlisted, so never installed: " + ", ".join(unlisted) if unlisted else "")
     copy_problems = validate_contract_copies(source_dir)
@@ -208,16 +212,16 @@ def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
     check("points at its structural toolkit",
           slash(tools_dir).lower() in normalized_text, slash(tools_dir))
 
-    for script in SCRIPT_NAMES:
-        installed = tools_dir / script
-        check(f"installed script exists: {script}", installed.is_file(),
+    for relative in SHARED_FILES:
+        installed = tools_dir / relative
+        check(f"installed shared file exists: {relative}", installed.is_file(),
               str(installed))
-        source = source_dir / script
+        source = source_dir / relative
         if installed.is_file() and source.is_file():
-            check(f"installed script matches shared source: {script}",
+            check(f"installed shared file matches source: {relative}",
                   installed.read_bytes() == source.read_bytes())
 
-    desired = [*SCRIPT_NAMES, ADAPTERS[key]["filename"]]
+    desired = generated_files(key)
     ownership_problems = manifest_problems(tools_dir, desired)
     check("generated-file ownership is current", not ownership_problems,
           "; ".join(ownership_problems))
@@ -237,13 +241,10 @@ def target_type(value):
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"),
-                        help="Obsidian vault root")
+    add_vault_argument(parser)
     parser.add_argument("--target", type=target_type, default="Auto",
-                        help="Auto, ClaudeCode, Codex, All, or Custom")
-    parser.add_argument("--claude-dir", default=str(ADAPTERS["ClaudeCode"]["default_dir"]))
-    parser.add_argument("--codex-dir", default=str(ADAPTERS["Codex"]["default_dir"]))
-    parser.add_argument("--custom-dir")
+                        help=f"Auto or one of {', '.join(TARGETS)}")
+    add_adapter_directory_arguments(parser)
     parser.add_argument("--source", help="canonical SKILL.md template")
     return parser.parse_args()
 
@@ -253,12 +254,7 @@ def main():
     vault = absolute(args.vault)
     here = Path(__file__).resolve().parent
 
-    directories = {
-        "ClaudeCode": absolute(args.claude_dir),
-        "Codex": absolute(args.codex_dir),
-    }
-    if args.custom_dir:
-        directories["Custom"] = absolute(args.custom_dir)
+    directories = adapter_directories(args)
 
     candidate = absolute(args.source) if args.source else here / "SKILL.md"
     template = None
@@ -285,7 +281,7 @@ def main():
 
     validate_vault(vault)
     validate_memory_freshness(vault)
-    validate_shared_scripts(source_dir)
+    validate_shared_files(source_dir)
 
     rendered = {}
     for key in selected:
@@ -305,11 +301,11 @@ def main():
             text, tools_dir = rendered[key]
             check(f"{first_key} and {key} share one bootstrap semantics",
                   normalized_adapter(text, vault, tools_dir) == baseline)
-        for script in SCRIPT_NAMES:
-            paths = [tools / script for _, tools in rendered.values()]
+        for relative in SHARED_FILES:
+            paths = [tools / relative for _, tools in rendered.values()]
             same = (all(path.is_file() for path in paths) and
                     len({path.read_bytes() for path in paths}) == 1)
-            check(f"all adapters share script bytes: {script}", same)
+            check(f"all adapters share file bytes: {relative}", same)
 
     print()
     if RESULTS and all(RESULTS):

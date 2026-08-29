@@ -5,6 +5,7 @@ The parser is deliberately semantic-free: it recognizes frontmatter and the
 first line containing only ``***``. Consumers reuse one full structural record.
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -121,17 +122,22 @@ def emit_json(record: dict, exit_code: int):
     sys.exit(exit_code)
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    full_on_miss = "--full-on-miss" in sys.argv
-    as_json = "--json" in sys.argv
+def arguments(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Return the structurally parsed problem side of a note.")
+    parser.add_argument("path", help="path to one Markdown note")
+    parser.add_argument("--json", action="store_true",
+                        help="emit a structured result")
+    parser.add_argument("--full-on-miss", action="store_true",
+                        help="return the full body when no separator exists")
+    return parser.parse_args(argv)
 
-    if not args:
-        print("usage: python problem_half.py <path-to-note.md> "
-              "[--json] [--full-on-miss]", file=sys.stderr)
-        sys.exit(2)
 
-    raw_path = args[0]
+def main(argv=None):
+    args = arguments(argv)
+    raw_path = args.path
+    full_on_miss = args.full_on_miss
+    as_json = args.json
     path = Path(raw_path).expanduser()
     if not path.is_file():
         if as_json:

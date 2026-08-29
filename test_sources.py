@@ -436,6 +436,21 @@ class ReadEraAdapterTests(unittest.TestCase):
             stn.source_records([dict(web, locator=None,
                                      url="https://x.com/a/status/1")])
 
+    def test_source_text_is_preserved_exactly_after_validation(self):
+        text = "  exact source text  \n"
+        record = {
+            "id": "exact",
+            "text": text,
+            "locator": "test://source/exact",
+            "provenance": {"provider": "test"},
+            "completeness": "complete",
+            "withdrawal_state": "active",
+        }
+
+        parsed = stn.source_records([record])
+
+        self.assertEqual(parsed["exact"]["text"], text)
+
 
     def test_deletion_in_readera_is_reported_and_excluded_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -3,7 +3,7 @@
   "version": 1,
   "invariants": [
     "optional opening YAML frontmatter is excluded from the problem side",
-    "the first line equal to *** outside a triple-backtick fence is the boundary",
+    "the first line whose trimmed content is *** outside a triple-backtick fence is the boundary",
     "a separator may exist while either side is empty",
     "a note is reviewable only when both sides are non-empty"
   ],
@@ -62,6 +62,22 @@
       "has_separator": true,
       "problem": "Problem.",
       "conjecture": "First answer.\n***\nSecond marker stays in the answer.",
+      "reviewable": true
+    },
+    {
+      "name": "separator accepts leading whitespace",
+      "text": "Problem.\n   ***\nAnswer.",
+      "has_separator": true,
+      "problem": "Problem.",
+      "conjecture": "Answer.",
+      "reviewable": true
+    },
+    {
+      "name": "separator accepts trailing whitespace",
+      "text": "Problem.\n***   \nAnswer.",
+      "has_separator": true,
+      "problem": "Problem.",
+      "conjecture": "Answer.",
       "reviewable": true
     },
     {

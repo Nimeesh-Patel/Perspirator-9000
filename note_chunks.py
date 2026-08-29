@@ -117,10 +117,6 @@ def bullets(body):
             if b.strip().startswith("- ")]
 
 
-def body_offset(text):
-    return parse_note(text)["body_start"]
-
-
 def _blocks(body):
     """Return ``(start, text)`` authored blocks; multi-line lists stay whole."""
     lines = body.split("\n")

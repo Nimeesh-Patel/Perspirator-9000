@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure whether retrieval recovers relations Nimeesh already authored.
+"""Measure whether retrieval recovers relations the vault author already recorded.
 
 The standing question is whether this index actually finds related knowledge,
 and it has never been answered: `Neighbour Retrieval.md` says "whether it is
@@ -7,8 +7,8 @@ semantic is what the evaluations test", and the only evaluation ever run was
 43 hand-judged pairs whose labels now sit misfiled in an unrelated note.
 
 Hand-labelling does not scale with the vault, so this uses ground truth the
-vault already contains. A `[[wikilink]]` between two notes is a relation
-Nimeesh asserted, so a ranker that cannot surface a note's own linked notes is
+vault already contains. A `[[wikilink]]` between two notes is a relation the
+author asserted, so a ranker that cannot surface a note's own linked notes is
 not finding related knowledge — whatever its scores look like.
 
 What this measures and does not:
@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from adapters import add_vault_argument  # noqa: E402
 from note_chunks import extract_links, iter_notes, read_note  # noqa: E402
 from neighbour import (Embedder, collapse_by_note, content_words,  # noqa: E402
                        inverse_document_frequency, lexical_coverage,
@@ -111,7 +112,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--vault", default=str(Path.home() / "nimeesh vault"))
+    add_vault_argument(parser)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--sample", type=int, default=100)
     parser.add_argument("--seed", type=int, default=7)
