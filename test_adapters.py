@@ -50,6 +50,10 @@ class AdapterDeclarationTests(unittest.TestCase):
         self.assertIn("fixtures/problem_note_conformance.json", SHARED_FILES)
         self.assertIn("contract_copies.json", generated_files("Codex"))
 
+    def test_spotify_ledger_is_shared_toolkit(self):
+        self.assertIn("spotify_ledger.py", SHARED_FILES)
+        self.assertIn("spotify_ledger.py", generated_files("Codex"))
+
     def test_missing_contract_declaration_is_a_validation_failure(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             problems = validate_contract_copies(tmp)
