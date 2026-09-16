@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Browser attention</title>
+<style>body{font:15px system-ui;width:330px;padding:16px;background:#f7f5ef;color:#202a2a}input,button{font:inherit;padding:9px;box-sizing:border-box;width:100%;margin:8px 0}button{background:#255f50;color:white;border:0;border-radius:5px}small{display:block;line-height:1.5}#status{white-space:pre-wrap}</style>
+<h2>Browser attention</h2>
+<label for="profile">Name this browser profile</label><input id="profile" placeholder="Nimeesh 06" maxlength="100">
+<button id="capture">Save current tabs</button>
+<small>Captures all regular windows in this profile. Saves titles, exact links, groups and tab state locally. Does not open pages, play videos, or change tabs.</small>
+<p id="status" role="status"></p><script type="module" src="popup.js"></script></html>

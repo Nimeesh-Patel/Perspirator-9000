@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Browser Attention Capture",
+  "version": "0.1.0",
+  "description": "Save a dated local inventory of tabs and groups without opening pages.",
+  "permissions": ["tabs", "tabGroups", "storage", "downloads"],
+  "incognito": "not_allowed",
+  "action": {"default_popup": "popup.html", "default_title": "Capture browser attention"}
+}
