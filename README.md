@@ -95,8 +95,9 @@ contract declarations and canonical fixtures.
 For the local Calibre provider, configure Calibre's built-in Content Server on
 a literal loopback address with local write disabled. The adapter defaults to
 `http://127.0.0.1:8081`, refuses hostnames and non-loopback IPs, never opens
-`metadata.db`, and exposes no mutation command. It can read metadata, run a
-book-bounded query against Calibre's separately enabled full-text index, and
+`metadata.db`, and exposes no mutation command. It can read metadata, search
+the library, one book or a metadata-filtered subset using Calibre's separately
+enabled full-text index, and
 recover desktop-viewer records embedded in a bounded EPUB copy, or standard
 page annotations embedded in a bounded PDF copy. PDF annotations are read-only
 evidence: the PDF remains their canonical owner, page rectangles and
@@ -109,6 +110,22 @@ representative book-format snippets, not every occurrence or a whole-book
 extraction; embedded records do not stand for every Calibre or external-reader
 annotation namespace. Run
 `python calibre_query.py --help` for setup requirements and query syntax.
+
+When a representative snippet is insufficient, the same provider lists
+sections/pages, reads bounded continuations and searches multiple literal
+passages in a served book. `document_query.py` exposes the same mechanism for
+an explicitly named local file. EPUB reading order comes from its package
+spine; PDF positions are physical pages; DOCX uses stored paragraph text; legacy
+DOC uses an isolated installed Windows Word reader over a temporary copy.
+Normalized character offsets and source hashes identify the extracted
+representation without pretending they are native ebook page numbers or
+reader geometry. PDF page listing avoids text extraction, and a selected-page
+read avoids parsing unrelated pages. Optional `--ocr` uses Windows' local OCR
+on PDF pages without text, with recognition explicitly kept as partial derived
+evidence. It changes neither a PDF nor Calibre's index. Unsupported formats,
+unavailable readers/languages, extraction bounds and unobserved surfaces remain
+visible. Query files avoid shell quoting, and metadata has an optional compact
+projection; default metadata and annotation evidence are preserved.
 
 ## Development boundary
 

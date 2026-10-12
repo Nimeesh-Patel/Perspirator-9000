@@ -275,6 +275,34 @@ class CalibreQueryTests(unittest.TestCase):
         self.assertTrue(open_at.startswith("search:"))
         self.assertNotIn(cq.FTS_MATCH_START, open_at)
 
+    def test_library_and_metadata_scoped_full_text_use_native_index(self):
+        commands = []
+        def runner(command, **kwargs):
+            commands.append(command)
+            return Completed([{"book_id": 83, "format": "EPUB", "title": "Other", "text": "criticism"}])
+        whole = self.call("full-text", runner=runner, query_text="criticism")
+        self.assertEqual(whole["status"], "complete")
+        self.assertEqual(whole["scope"]["search_scope"], "entire library")
+        self.assertNotIn("--restrict-to", commands[-1])
+        filtered = self.call("full-text", runner=runner, query_text="criticism", restrict_search='authors:"Popper"')
+        self.assertEqual(filtered["status"], "complete")
+        self.assertEqual(commands[-1][commands[-1].index("--restrict-to") + 1], 'search:authors:"Popper"')
+        self.assertIn("unsupported formats", whole["scope"]["index_coverage_boundary"])
+        self.assertEqual(self.call("full-text", query_text="x", book_id=82, restrict_search="tag:foo")["status"], "unavailable")
+
+    def test_compact_metadata_omits_large_comments_but_keeps_native_identity(self):
+        row = {"id": 72, "title": "Book", "authors": ["Author"], "formats": ["EPUB"],
+               "uuid": "native-uuid", "comments": "large comment " * 1000,
+               "identifiers": {"isbn": "123"}}
+        result = self.call("search", query_text="Book", compact=True,
+                           runner=lambda *a, **k: Completed([row]))
+        record = result["records"][0]
+        self.assertTrue(result["scope"]["compact"])
+        self.assertEqual(record["provider_identity"]["uuid"], "native-uuid")
+        self.assertEqual(record["metadata"]["identifiers"], {"isbn": "123"})
+        self.assertNotIn("comments", record["metadata"])
+        self.assertNotIn("large comment", record["text"])
+
     def test_full_text_locator_preserves_multi_term_match_context(self):
         snippet = (
             "… " + cq.FTS_MATCH_START + "John" + cq.FTS_MATCH_END

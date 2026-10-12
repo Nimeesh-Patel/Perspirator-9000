@@ -54,6 +54,11 @@ class AdapterDeclarationTests(unittest.TestCase):
         self.assertIn("spotify_ledger.py", SHARED_FILES)
         self.assertIn("spotify_ledger.py", generated_files("Codex"))
 
+    def test_document_retrieval_is_installed_with_both_native_and_local_routes(self):
+        for relative in ("calibre_query.py", "document_query.py", "document_text.py", "pdf_ocr.py", "windows_ocr.ps1", "legacy_doc.py", "windows_doc.ps1"):
+            self.assertIn(relative, generated_files("Codex"))
+            self.assertIn(relative, generated_files("ClaudeCode"))
+
     def test_missing_contract_declaration_is_a_validation_failure(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             problems = validate_contract_copies(tmp)

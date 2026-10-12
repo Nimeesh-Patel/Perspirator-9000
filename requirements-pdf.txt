@@ -1,3 +1,5 @@
-# Optional runtime for read-only standard PDF annotation recovery.
+# Optional runtime for read-only PDF annotations and text recovery.
 # Pinned so coordinate and annotation decoding behavior is criticisable.
+# pdfplumber brings pypdfium2 for optional bounded page rendering. --ocr also
+# requires Windows' local OCR engine and an installed recognition language.
 pdfplumber==0.11.9
