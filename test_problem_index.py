@@ -8,6 +8,23 @@ from problem_index import index_note, root_problem_records
 
 
 class RootProblemIndexTests(unittest.TestCase):
+    def test_invalid_note_encoding_does_not_replace_a_previous_index(self):
+        root = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp)
+            (vault / "broken.md").write_bytes(b"Problem \xff\n***\nConjecture")
+            output = vault / "index.json"
+            output.write_text("previous index", encoding="utf-8")
+            completed = subprocess.run([sys.executable, str(root / "problem_index.py"),
+                str(vault), "--out", str(output)], capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("discovery did not complete", completed.stderr)
+            self.assertEqual(output.read_text(), "previous index")
+            half = subprocess.run([sys.executable, str(root / "problem_half.py"),
+                str(vault / "broken.md"), "--json"], capture_output=True, text=True)
+            self.assertEqual(half.returncode, 2)
+            self.assertIn('"status": "unreadable"', half.stdout)
+
     def test_only_direct_root_problem_notes_are_indexed(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             vault = Path(tmp)

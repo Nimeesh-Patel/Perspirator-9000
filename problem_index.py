@@ -49,7 +49,7 @@ from note_chunks import extract_links, parse_frontmatter  # noqa: E402
 
 def index_note(path: Path, vault_root: Path):
     """Return an index record for a problem note, or None if not one."""
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    text = path.read_text(encoding="utf-8-sig")
     parsed = parse_note(text)
     frontmatter, problem_side = parsed["frontmatter"], parsed["problem"]
     if not parsed["has_separator"]:
@@ -93,7 +93,11 @@ def main(argv=None):
         print(f"error: not a directory: {vault_root}", file=sys.stderr)
         sys.exit(2)
 
-    records = root_problem_records(vault_root)
+    try:
+        records = root_problem_records(vault_root)
+    except (OSError, UnicodeError) as error:
+        print(f"error: root note discovery did not complete: {error}", file=sys.stderr)
+        return 2
     payload = json.dumps(records, ensure_ascii=False, indent=2)
     if args.out:
         Path(args.out).expanduser().write_text(payload + "\n", encoding="utf-8")
@@ -101,7 +105,8 @@ def main(argv=None):
               file=sys.stderr)
     else:
         print(payload)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

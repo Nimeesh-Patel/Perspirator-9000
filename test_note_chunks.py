@@ -2,9 +2,12 @@
 """Contract tests for structural parsing and retrieval-unit formation."""
 
 import json
+import io
 import subprocess
 import sys
 import tempfile
+import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -292,5 +295,22 @@ status: draft
     return 1 if FAILS else 0
 
 
+class ContractSuite(unittest.TestCase):
+    def test_invalid_utf8_is_not_replaced_inside_explanations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "invalid.md"
+            path.write_bytes(b"Problem \xff\n***\nConjecture")
+            with self.assertRaisesRegex(ValueError, "not valid UTF-8"):
+                nc.read_note(path)
+
+    def test_contract_checks(self):
+        FAILS.clear()
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            result = main()
+        self.assertEqual(result, 0, captured.getvalue())
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    unittest.main()
+

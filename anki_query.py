@@ -69,11 +69,28 @@ def invoke(action, endpoint=DEFAULT_ENDPOINT, timeout=10, **params):
     except json.JSONDecodeError as exc:
         return {"ok": False, "status": "error", "action": action,
                 "data": None, "error": f"malformed response: {exc}"}
-    if body.get("error"):
+    if (not isinstance(body, dict) or "result" not in body
+            or "error" not in body):
+        return {"ok": False, "status": "error", "action": action,
+                "data": None, "error": "malformed AnkiConnect response envelope"}
+    if body["error"] is not None:
         return {"ok": False, "status": "error", "action": action,
                 "data": None, "error": body["error"]}
+    data = body["result"]
+    if data is None:
+        return {"ok": False, "status": "error", "action": action,
+                "data": None, "error": "read response has no result"}
+    list_actions = {"deckNames", "findNotes", "findCards", "notesInfo",
+                    "cardsInfo", "getTags", "modelNames", "modelFieldNames",
+                    "cardsToNotes", "getNoteTags"}
+    if action in list_actions and not isinstance(data, list):
+        return {"ok": False, "status": "error", "action": action,
+                "data": None, "error": f"{action} result must be a list"}
+    if action == "version" and (not isinstance(data, int) or isinstance(data, bool)):
+        return {"ok": False, "status": "error", "action": action,
+                "data": None, "error": "version result must be an integer"}
     return {"ok": True, "status": "ok", "action": action,
-            "data": body.get("result"), "error": None}
+            "data": data, "error": None}
 
 
 def reachable(endpoint=DEFAULT_ENDPOINT, timeout=10):
@@ -87,10 +104,25 @@ def notes(note_ids, endpoint=DEFAULT_ENDPOINT, timeout=10):
     result = invoke("notesInfo", endpoint=endpoint, timeout=timeout, notes=ids)
     if not result["ok"]:
         return result
+    records = result["data"]
+    def invalid(message):
+        return {**result, "ok": False, "status": "error", "data": None,
+                "error": message}
+    if not isinstance(records, list) or len(records) != len(ids):
+        return invalid("notesInfo did not return one record per requested identity")
     found = []
-    for wanted, record in zip(ids, result["data"] or []):
-        if record and record.get("noteId"):
-            fields = record.get("fields") or {}
+    for wanted, record in zip(ids, records):
+        if not isinstance(record, dict):
+            return invalid("notesInfo returned an invalid note record")
+        if record:
+            if record.get("noteId") != wanted:
+                return invalid(f"notesInfo returned a different identity for {wanted}")
+            fields = record.get("fields")
+            if (not isinstance(fields, dict)
+                    or any(not isinstance(value, dict)
+                           or not isinstance(value.get("value"), str)
+                           for value in fields.values())):
+                return invalid(f"notesInfo returned invalid fields for {wanted}")
             found.append({
                 "note_id": wanted, "present": True,
                 "model": record.get("modelName"),

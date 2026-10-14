@@ -148,8 +148,8 @@ def main(argv=None):
         sys.exit(2)
 
     try:
-        text = path.read_text(encoding="utf-8-sig", errors="replace")
-    except OSError as exc:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
         if as_json:
             emit_json({"path": raw_path, "status": STATUS_UNREADABLE,
                        "error": str(exc)}, 2)

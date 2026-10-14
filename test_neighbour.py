@@ -6,6 +6,7 @@ import io
 import json
 import sys
 import tempfile
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -309,6 +310,7 @@ def main():
               all("derived" not in hit["where"] for hit in recurrence))
         (root / "memory" / "Left.md").unlink()
         (root / "memory" / "Right.md").unlink()
+        (root / "memory" / "perspirator" / "runs" / "derived.md").unlink()
 
         unchanged_stub = StubEmbedder()
         unchanged = nb.refresh(root, config, out, embedder=unchanged_stub)
@@ -594,5 +596,15 @@ def main():
     return 1 if FAILS else 0
 
 
+class ContractSuite(unittest.TestCase):
+    def test_contract_checks(self):
+        FAILS.clear()
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            result = main()
+        self.assertEqual(result, 0, captured.getvalue())
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    unittest.main()
+

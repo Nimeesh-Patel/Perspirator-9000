@@ -44,7 +44,9 @@ DEFAULT_MAX_TOKENS = 256
 
 def read_note(path):
     try:
-        return path.read_text(encoding="utf-8-sig", errors="replace")
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeError as error:
+        raise ValueError(f"note is not valid UTF-8: {path}") from error
     except OSError:
         return None
 

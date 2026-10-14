@@ -154,6 +154,8 @@ Run the complete repository suite with:
 python -m unittest discover -p "test_*.py"
 ```
 
+The documented discovery command also runs the chunking and neighbour contract
+checks; they must not survive solely behind standalone __main__ entry points.
 The tests use synthetic fixtures; neighbour tests use a stub embedder and do
 not download a model. After changing copied tools, reinstall the affected
 target and run `doctor.py` so the installed enactment cannot silently diverge.
@@ -168,3 +170,9 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 
 For current behaviour, begin with the configured vault's `Bootstrap.md`, not
 with repository prose.
+
+Native Anki read responses must carry the expected envelope and one exact
+record per requested note identity. Null, truncated or mismatched observations
+are errors, not empty collections or absent notes. Structural Markdown readers
+refuse invalid UTF-8 instead of replacing bytes inside an apparent explanation;
+a failed root-note scan cannot overwrite a previously derived index.
