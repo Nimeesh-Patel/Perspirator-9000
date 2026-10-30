@@ -216,10 +216,11 @@ def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
         installed = tools_dir / relative
         check(f"installed shared file exists: {relative}", installed.is_file(),
               str(installed))
-        source = source_dir / relative
-        if installed.is_file() and source.is_file():
-            check(f"installed shared file matches source: {relative}",
-                  installed.read_bytes() == source.read_bytes())
+        if source_dir is not None:
+            source = source_dir / relative
+            if installed.is_file() and source.is_file():
+                check(f"installed shared file matches source: {relative}",
+                      installed.read_bytes() == source.read_bytes())
 
     desired = generated_files(key)
     ownership_problems = manifest_problems(tools_dir, desired)
@@ -262,7 +263,7 @@ def main():
         candidate_text = candidate.read_text(encoding="utf-8-sig", errors="replace")
         if "{{VAULT_PATH}}" in candidate_text and "{{TOOLS_DIR}}" in candidate_text:
             template = candidate_text
-    source_dir = candidate.parent if template is not None else here
+    source_dir = candidate.parent if template is not None else None
 
     if args.target == "Auto":
         selected = [key for key in FIRST_CLASS
@@ -272,6 +273,13 @@ def main():
 
     print(f"Perspirator doctor - target: {args.target}")
     print(f"Vault: {vault}")
+    if source_dir is None:
+        if args.source:
+            check("canonical source template is available", False,
+                  f"{candidate} must contain both path placeholders")
+        else:
+            print("  [note] repository source comparison unavailable; "
+                  "use --source with the canonical SKILL.md template")
     if not selected:
         check("an installed adapter was discovered", False,
               "use --target or install an adapter")
@@ -281,7 +289,7 @@ def main():
 
     validate_vault(vault)
     validate_memory_freshness(vault)
-    validate_shared_files(source_dir)
+    validate_shared_files(source_dir or here)
 
     rendered = {}
     for key in selected:
@@ -309,7 +317,8 @@ def main():
 
     print()
     if RESULTS and all(RESULTS):
-        print(f"all {len(RESULTS)} checks passed")
+        coverage = "; repository source comparison unavailable" if source_dir is None else ""
+        print(f"all {len(RESULTS)} checks passed{coverage}")
         return 0
     print(f"{RESULTS.count(False)} of {len(RESULTS)} checks FAILED")
     return 1

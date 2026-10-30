@@ -23,8 +23,11 @@ runtime, policies, project explanations, and run reports.
 | Past execution evidence | `<vault>/memory/perspirator/runs/` |
 
 Installed adapters and copied scripts are generated artifacts. They do not own
-policy, and `doctor.py` detects drift from the repository source. Run reports
-are evidence about past work, never a second current runtime.
+policy. Run `doctor.py` from the repository, or supply its canonical `SKILL.md`
+with `--source`, to check drift against that independent source. An installed
+doctor without a canonical source checks local structure and ownership and reports source
+comparison as unavailable. Run reports are evidence about past work, never a
+second current runtime.
 
 ## How a run starts
 
