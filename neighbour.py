@@ -14,6 +14,7 @@ import re
 import sys
 import tempfile
 import time
+from datetime import datetime
 from itertools import zip_longest
 from pathlib import Path
 
@@ -480,7 +481,7 @@ def load_index(vault, index=None, refresh_index=True):
 
 
 def public_header(header):
-    """Bounded reader-facing index provenance; freshness stamps stay internal."""
+    """Bounded index provenance; per-note freshness stamps stay internal."""
     try:
         shape = json.loads(header.get("shape", "{}"))
     except json.JSONDecodeError:
@@ -489,6 +490,21 @@ def public_header(header):
                for key in ("model", "dim", "units", "built")}
     summary["shape"] = shape
     return summary
+
+
+def match_freshness(vault, header, matches, refreshed, now=None):
+    """Report index age and missing nominations, without deciding staleness."""
+    built = header.get("built")
+    try:
+        built_at = datetime.strptime(built, "%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        raise SystemExit(f"STOP: unreadable index built time {built!r}; rebuild the index.") from None
+    age = ((now if now is not None else datetime.now()) - built_at).days
+    nominated = dict.fromkeys(item["note"] for match in matches
+                              for item in match["results"])
+    missing = [note for note in nominated if not (vault / note).exists()]
+    return {"built": built, "index_age_days": age,
+            "refreshed": refreshed, "missing_paths": missing}
 
 
 def collapse_by_note(indices, meta, scores, limit):
@@ -841,17 +857,27 @@ def cmd_match(args):
     matches = [match_query(vault, config, meta, vectors, query, vector,
                            args, refs, cli=cli)
                for query, vector in zip(queries, query_vectors)]
+    freshness = match_freshness(vault, header, matches, not args.no_refresh)
+    result_header = public_header(header)
+    result_header["freshness"] = freshness
 
     if args.json:
         if len(matches) == 1:
             payload = {"query_note": matches[0]["query_note"],
-                       "header": public_header(header),
+                       "header": result_header,
                        "results": matches[0]["results"],
                        "graph": matches[0]["graph"]}
         else:
-            payload = {"header": public_header(header), "queries": matches}
+            payload = {"header": result_header, "queries": matches}
         print(json.dumps(payload, ensure_ascii=False, indent=1))
         return 0
+    print(f"freshness: built {freshness['built']}; "
+          f"age {freshness['index_age_days']} whole days; "
+          f"refreshed {str(freshness['refreshed']).lower()}")
+    if freshness["missing_paths"]:
+        print("missing nominated paths:")
+        for note in freshness["missing_paths"]:
+            print(f"  {note}")
     for offset, result in enumerate(matches):
         if len(matches) > 1:
             if offset:

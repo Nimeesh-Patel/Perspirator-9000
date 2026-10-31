@@ -10,7 +10,7 @@ from pathlib import Path
 
 SHARED_FILES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
                 "note_chunks.py", "neighbour.py", "obsidian_cli.py",
-                "policy_index.py", "note_rename.py", "anki_query.py",
+                "policy_index.py", "note_rename.py", "anki_query.py", "run_check.py",
                 "calibre_query.py", "document_text.py", "document_query.py",
                 "pdf_annotations.py", "pdf_ocr.py", "windows_ocr.ps1", "requirements-pdf.txt",
                 "legacy_doc.py", "windows_doc.ps1",

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -490,7 +491,7 @@ def main():
         batch_loaded = {
             "vault": root, "config": config, "stale": None,
             "header": {"model": "stub/model", "chunks": 2, "units": 2,
-                       "dim": 2, "built": "now", "shape": config["shape"]},
+                       "dim": 2, "built": "2026-10-31 12:00", "shape": config["shape"]},
             "meta": [
                 {"note": "a.md", "stem": "a", "heading": [], "side": "problem",
                  "unit": "problem_identity", "strategy": "whole",
@@ -603,6 +604,82 @@ class ContractSuite(unittest.TestCase):
         with redirect_stdout(captured):
             result = main()
         self.assertEqual(result, 0, captured.getvalue())
+
+
+class MatchFreshnessTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        write(self.root, "memory/perspirator/Neighbour Retrieval.md", CONFIG)
+        write(self.root, "a.md", "problem a?\n***\nconjecture a.\n")
+        removed = write(self.root, "b.md", "problem b?\n***\nconjecture b.\n")
+        config = nb.load_config(self.root)
+        nb.refresh(self.root, config, config["index"], embedder=StubEmbedder())
+        self.loaded = nb.load_index(self.root, refresh_index=False)
+        self.built = datetime.strptime(self.loaded["header"]["built"], "%Y-%m-%d %H:%M")
+        self.now = self.built + timedelta(days=1, hours=23, minutes=59)
+        removed.unlink()
+
+    def run_match(self, texts, no_refresh=True, as_json=True):
+        args = SimpleNamespace(
+            vault=str(self.root), index=None, no_refresh=no_refresh,
+            file=None, stdin=False, text=texts,
+            corpus="all", side="all", unit="all", folder=None,
+            k=100, graph="none", json=as_json, rank="embedding")
+        output = io.StringIO()
+        now = self.now
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls):
+                return now
+
+        with patch.object(nb, "load_index", return_value=self.loaded) as load, \
+                patch.object(nb, "Embedder", return_value=StubEmbedder()), \
+                patch.object(nb, "datetime", FixedDateTime), \
+                redirect_stdout(output):
+            self.assertEqual(nb.cmd_match(args), 0)
+        load.assert_called_once_with(str(self.root), index=None,
+                                     refresh_index=not no_refresh)
+        return json.loads(output.getvalue()) if as_json else output.getvalue()
+
+    def test_single_query_reports_whole_day_age_and_deleted_nomination(self):
+        payload = self.run_match(["problem b?"])
+        self.assertIn("b.md", [item["note"] for item in payload["results"]])
+        self.assertEqual(payload["header"]["freshness"], {
+            "built": self.loaded["header"]["built"], "index_age_days": 1,
+            "refreshed": False, "missing_paths": ["b.md"],
+        })
+
+    def test_multiple_queries_share_freshness_and_refresh_flag(self):
+        payload = self.run_match(["problem a?", "problem b?"], no_refresh=False)
+        self.assertEqual(len(payload["queries"]), 2)
+        self.assertEqual(payload["header"]["freshness"], {
+            "built": self.loaded["header"]["built"], "index_age_days": 1,
+            "refreshed": True, "missing_paths": ["b.md"],
+        })
+
+    def test_text_output_exposes_freshness_and_missing_paths(self):
+        output = self.run_match(["problem b?"], as_json=False)
+        self.assertIn("built " + self.loaded["header"]["built"], output)
+        self.assertIn("age 1 whole days; refreshed false", output)
+        self.assertIn("missing nominated paths:\n  b.md", output)
+
+    def test_freshness_stats_only_unique_returned_paths(self):
+        seen = []
+        exists = Path.exists
+
+        def observed_exists(path):
+            seen.append(path)
+            return exists(path)
+
+        matches = [{"results": [{"note": "a.md"}, {"note": "a.md"}]}]
+        with patch.object(Path, "exists", observed_exists):
+            facts = nb.match_freshness(self.root, self.loaded["header"], matches,
+                                       False, now=self.now)
+        self.assertEqual(seen, [self.root / "a.md"])
+        self.assertEqual(facts["missing_paths"], [])
 
 
 if __name__ == "__main__":

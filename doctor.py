@@ -55,6 +55,7 @@ def validate_vault(vault):
                       vault / "memory" / "policies" / "Policy Loader.md")
     check_active_note("candidate selection note", base / "Candidate Selection.md")
     check_active_note("neighbour retrieval note", base / "Neighbour Retrieval.md")
+    check_active_note("error correction role note", base / "Error Correction role.md")
     try:
         policies = active_policy_surface(vault)
         check("active policy surface is well formed", True,
