@@ -1,9 +1,10 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from artifact_lifecycle import lifecycle_problems, load_lifecycle
+from artifact_lifecycle import inventory, lifecycle_problems, load_lifecycle
 
 
 def entry(**fields):
@@ -65,6 +66,74 @@ class ArtifactLifecycleTests(unittest.TestCase):
                 declaration.write_text(
                     json.dumps({"artifacts": [invalid]}), encoding="utf-8")
                 with self.assertRaises(ValueError):
+                    load_lifecycle(vault)
+
+    def test_inventory_selects_declared_trees_and_preserves_observed_metadata(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            runs = vault / "runs"
+            runs.mkdir()
+            payload = b"---\nstatus: open\nretained_for: original criticism\n---\nA finding.\n"
+            (runs / "one.md").write_bytes(payload)
+            (runs / "README.md").write_bytes(b"\xff")
+            # The other tree must not be scanned or interpreted.
+            (vault / "other").write_bytes(b"\xff")
+            entries = [entry(name="runs", path="runs", exempt=["README.md"]),
+                       entry(name="other", path="other")]
+            result = inventory(vault, entries, ["runs"])
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(len(result["artifacts"]), 1)
+            files = result["artifacts"][0]["files"]
+            self.assertEqual([f["path"] for f in files], ["runs/one.md"])
+            self.assertEqual(files[0]["size"], len(payload))
+            self.assertEqual(files[0]["frontmatter"]["retained_for"], "original criticism")
+            self.assertEqual((runs / "one.md").read_bytes(), payload)
+            with self.assertRaises(ValueError):
+                inventory(vault, entries, ["undeclared"])
+
+    def test_invalid_utf8_is_partial_observation_not_empty_metadata(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            (vault / "broken.md").write_bytes(b"\xff")
+            result = inventory(vault, [entry(path="broken.md")], ["archive"])
+            self.assertEqual(result["status"], "partial")
+            observed = result["artifacts"][0]["files"][0]
+            self.assertEqual(observed["status"], "unavailable")
+            self.assertIn("sha256", observed)
+            self.assertNotIn("frontmatter", observed)
+
+    def test_status_validation_cannot_ignore_unreadable_proposal(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            (vault / "drafts").mkdir()
+            (vault / "drafts/broken.md").write_bytes(b"---\nstatus: \xff\n---\n")
+            problems = lifecycle_problems(vault, [entry(
+                path="drafts", path_type="directory", validation="frontmatter-state",
+                forbidden_states=["completed"])])
+            self.assertEqual(len(problems), 1)
+            self.assertIn("broken.md is unreadable", problems[0])
+
+    def test_reparse_root_is_not_followed_or_treated_as_empty(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            (vault / "boundary").mkdir()
+            with patch("artifact_lifecycle._is_reparse", return_value=True), \
+                    patch("artifact_lifecycle.scan_tree") as scanner:
+                result = inventory(vault, [entry(path="boundary")], ["archive"])
+            scanner.assert_not_called()
+            self.assertEqual(result["status"], "partial")
+            self.assertEqual(result["artifacts"][0]["status"], "unavailable")
+            self.assertIn("reparse boundary", result["artifacts"][0]["error"])
+
+    def test_loader_rejects_empty_rooted_and_cross_platform_escaping_paths(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            declaration = vault / "memory/perspirator/artifact-lifecycle.json"
+            declaration.parent.mkdir(parents=True)
+            for unsafe in ("", ".", "../other", "C:other", "\\rooted", "..\\other"):
+                declaration.write_text(json.dumps({"artifacts": [entry(path=unsafe)]}),
+                                       encoding="utf-8")
+                with self.subTest(path=unsafe), self.assertRaises(ValueError):
                     load_lifecycle(vault)
 
 

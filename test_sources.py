@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import note_chunks as nc
@@ -152,6 +153,23 @@ class SourceAdapterTests(unittest.TestCase):
 
 
 class SourceToNotesTests(unittest.TestCase):
+    def test_plan_refuses_malformed_existing_notes_before_source_assignment(self):
+        sources = stn.source_records([SOURCES[0]])
+        plan = {"notes": [{
+            "title": "New note",
+            "problem": "What does this source explain?",
+            "source_ids": ["a"],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            original = b"Existing source: https://exa\xffmple.com/a\n"
+            target.write_bytes(original)
+            with self.assertRaisesRegex(ValueError, "not valid UTF-8"):
+                stn.validate_plan(plan, sources, vault=vault)
+            self.assertEqual(target.read_bytes(), original)
+            self.assertFalse((vault / "New note.md").exists())
+
     def test_plan_requires_complete_unique_assignment(self):
         sources = stn.source_records({"records": SOURCES})
         plan = {"notes": [{
@@ -499,6 +517,31 @@ class HighlightsToNotesTests(unittest.TestCase):
         path = Path(directory) / "b.json"
         path.write_text(_json.dumps(self.bundle(records)), encoding="utf-8")
         return path
+
+    def test_plan_refuses_malformed_notes_before_book_identity_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            original = b"---\ncollection: Books\n---\n\n> Broken \xff passage.\n"
+            target.write_bytes(original)
+            with self.assertRaisesRegex(ValueError, "not valid UTF-8"):
+                hln.plan([self.highlight("new", "> Fresh.")], vault)
+            self.assertEqual(target.read_bytes(), original)
+            self.assertFalse((vault / "A Book.md").exists())
+
+    def test_unavailable_note_cannot_become_absent_book_or_source_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            note = vault / "Existing.md"
+            original = b"---\ncollection: Books\n---\nhttps://example.com/a\n"
+            note.write_bytes(original)
+            with patch.object(Path, "read_text", side_effect=PermissionError("unavailable")):
+                with self.assertRaisesRegex(ValueError, "cannot read source note"):
+                    hln.plan([self.highlight("new", "> Fresh.")], vault)
+                with self.assertRaisesRegex(ValueError, "cannot read source note"):
+                    stn.existing_source_locations(vault, {"a": SOURCES[0]})
+            self.assertEqual(note.read_bytes(), original)
+            self.assertFalse((vault / "A Book.md").exists())
 
     def test_appending_preserves_every_existing_byte(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -23,7 +23,7 @@ def check(label, ok, detail=""):
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from note_chunks import frontmatter_fields  # noqa: E402,F401
+from note_chunks import frontmatter_fields, read_note  # noqa: E402,F401
 from policy_index import active_policy_surface  # noqa: E402
 from artifact_lifecycle import lifecycle_problems, load_lifecycle  # noqa: E402
 from contract_copy import validate_contract_copies  # noqa: E402
@@ -41,7 +41,15 @@ def check_active_note(label, path):
     if not check(f"{label} exists", path.is_file(), str(path)):
         check(f"{label} status is active", False, "note missing")
         return
-    fields = frontmatter_fields(path.read_text(encoding="utf-8-sig", errors="replace"))
+    try:
+        text = read_note(path)
+    except ValueError as exc:
+        check(f"{label} status is active", False, str(exc))
+        return
+    if text is None:
+        check(f"{label} status is active", False, "note unreadable")
+        return
+    fields = frontmatter_fields(text)
     check(f"{label} status is active", fields.get("status") == "active",
           f"status: {fields.get('status')!r}")
 
@@ -53,6 +61,8 @@ def validate_vault(vault):
     check_active_note("bootstrap note", base / "Bootstrap.md")
     check_active_note("policy loader note",
                       vault / "memory" / "policies" / "Policy Loader.md")
+    check_active_note("bot grants configuration",
+                      vault / "memory" / "policies" / "Bot grants.md")
     check_active_note("candidate selection note", base / "Candidate Selection.md")
     check_active_note("neighbour retrieval note", base / "Neighbour Retrieval.md")
     check_active_note("error correction role note", base / "Error Correction role.md")

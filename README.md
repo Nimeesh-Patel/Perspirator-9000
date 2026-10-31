@@ -19,9 +19,10 @@ runtime, policies, project explanations, and run reports.
 | Run loading and question-to-tool routing | `<vault>/memory/perspirator/Bootstrap.md` |
 | Explanatory method and Theory of LLMs | `<vault>/memory/perspirator/Perspirator.md` |
 | Pre-delivery draft criticism | `<vault>/memory/perspirator/Error Correction role.md` |
+| Working problem records, handoffs and delivery | `<vault>/memory/policies/Error Correction.md` |
 | Editable semantic and write policies | `<vault>/memory/policies/*.md` |
 | Executable mechanisms and enforced invariants | this repository |
-| Past execution evidence | `<vault>/memory/perspirator/runs/` |
+| Retained execution evidence | `<vault>/memory/perspirator/runs/README.md` |
 
 Installed adapters and copied scripts are generated artifacts. They do not own
 policy. Run `doctor.py` from the repository, or supply its canonical `SKILL.md`
@@ -149,11 +150,20 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 - [install.py](install.py) and [adapters.py](adapters.py) — generated host packaging;
 - [doctor.py](doctor.py) — runtime, contract, lifecycle, and installed-copy validation;
 - [run_check.py](run_check.py) — advisory report headings loaded from the vault README;
+- [artifact_lifecycle.py](artifact_lifecycle.py) — read-only inventory of explicitly
+  selected declared artifact trees; hashes and metadata inform lifecycle review;
 - [contracts.py](contracts.py) — shared minimal provider/source boundaries; and
 - each tool's `--help` plus its tests — canonical executable interface.
 
 For current behaviour, begin with the configured vault's `Bootstrap.md`, not
 with repository prose.
+
+`run_check.py` also accepts an explicit Markdown `--contract` and `--section`.
+The same field-presence mechanism can inspect a handoff or return packet;
+editable role instructions own its meaning. A new role does not require a new
+checker. Source observations, document extraction, guarded writes and generated
+packaging likewise share their existing mechanisms while native adapters keep
+their distinct identities and failure boundaries.
 
 Native Anki read responses must carry the expected envelope and one exact
 record per requested note identity. Null, truncated or mismatched observations

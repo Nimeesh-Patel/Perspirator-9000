@@ -151,6 +151,53 @@ class RunCheckTests(unittest.TestCase):
         self.assertEqual(observed, [self.readme.resolve(), first.resolve(), second.resolve()])
         self.assertEqual(len(json.loads(output)["reports"]), 2)
 
+    def test_explicit_contract_and_section_share_the_existing_checker(self):
+        contract = self.vault / "memory/policies/Exchange.md"
+        contract.parent.mkdir(parents=True)
+        contract.write_text(
+            "## Handoff inputs\n- **Problem:** explanation\n"
+            "## Handoff returns\n- **Reviewed revision:** identity\n"
+            "- **Remaining criticism:** unresolved content\n", encoding="utf-8")
+        record = self.vault / "reply.md"
+        record.write_text("## Reviewed revision\nExact hash.\n", encoding="utf-8")
+        # No default README exists: an explicit contract must not depend on it.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = run_check.main([
+                "--vault", str(self.vault), "--contract", "memory/policies/Exchange.md",
+                "--section", "## Handoff returns", "--json", str(record)])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(result, 0)  # Missing content remains advisory.
+        self.assertEqual(payload["contract"], str(contract.resolve()))
+        self.assertEqual(payload["fields"], ["Reviewed revision", "Remaining criticism"])
+        self.assertEqual(payload["reports"][0]["fields"], {
+            "Reviewed revision": "present", "Remaining criticism": "absent"})
+        contract.write_text("## Handoff returns\n- **Changed field:** new meaning\n",
+                            encoding="utf-8")
+        self.assertEqual(run_check.required_fields(
+            self.vault, contract, "## Handoff returns")[1], ["Changed field"])
+
+    def test_unusable_explicit_contract_never_falls_back_to_default(self):
+        self.write_fields("Default field")
+        contract = self.vault / "invalid.md"
+        for content in (b"\xff", b"## Other\n- **Wrong:** field\n"):
+            contract.write_bytes(content)
+            with self.assertRaises(ValueError):
+                run_check.required_fields(self.vault, contract, "## Handoff inputs")
+        with self.assertRaisesRegex(ValueError, "must be a ## heading"):
+            run_check.required_fields(self.vault, contract, "### Handoff inputs")
+
+    def test_contract_examples_cannot_add_fields_or_end_the_real_section(self):
+        contract = self.vault / "exchange.md"
+        contract.write_text(
+            "## Handoff inputs\n- **Real:** field\n"
+            "````markdown\n## Other\n- **Example only:** ignored\n```\n"
+            "- **Still an example:** ignored\n````\n"
+            "    - **Indented code:** ignored\n- **Also real:** field\n"
+            "## Handoff returns\n- **Return:** separate\n", encoding="utf-8")
+        self.assertEqual(run_check.required_fields(
+            self.vault, contract, "## Handoff inputs")[1], ["Real", "Also real"])
+
 
 if __name__ == "__main__":
     unittest.main()

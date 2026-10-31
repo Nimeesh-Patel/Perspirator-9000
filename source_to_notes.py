@@ -47,7 +47,7 @@ import re
 import sys
 from pathlib import Path
 
-from note_chunks import MEMORY_FOLDER, NON_NOTE_FOLDERS
+from note_chunks import MEMORY_FOLDER, NON_NOTE_FOLDERS, read_note
 from problem_half import parse_note
 from change_transaction import (apply_writes, file_state, sha256_bytes,
                                 write_operation)
@@ -146,10 +146,9 @@ def existing_source_locations(vault, sources):
     """Source id -> root note names already carrying its exact locator."""
     locations = {source_id: [] for source_id in sources}
     for path in sorted(vault.glob("*.md")):
-        try:
-            text = path.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
-            continue
+        text = read_note(path)
+        if text is None:
+            raise ValueError(f"cannot read source note while locating existing sources: {path}")
         for source_id, source in sources.items():
             if source["locator"] in text:
                 locations[source_id].append(path.name)

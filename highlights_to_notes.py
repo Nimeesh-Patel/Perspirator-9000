@@ -35,6 +35,7 @@ from pathlib import Path
 
 from change_transaction import apply_writes, file_state, write_operation
 from contracts import validate_provider_result, validate_source_record
+from note_chunks import read_note
 
 SECTION = "## Highlights (ReadEra)"
 ANCHOR = "^re{}"
@@ -73,10 +74,9 @@ def book_notes(vault):
     """Vault-root notes that are book entities, as {stem: text}."""
     notes = OrderedDict()
     for path in sorted(vault.glob("*.md")):
-        try:
-            text = path.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
-            continue
+        text = read_note(path)
+        if text is None:
+            raise ValueError(f"cannot read source note while resolving book identity: {path}")
         head = FRONTMATTER.match(text)
         if head and COLLECTION_LINE.search(head.group(1)):
             notes[path.stem] = text

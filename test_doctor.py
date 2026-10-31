@@ -13,6 +13,21 @@ from doctor import orphan_census_partition
 from installation import write_manifest
 
 
+class DoctorActiveNoteTests(unittest.TestCase):
+    def test_invalid_or_unavailable_active_text_cannot_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            note = Path(tmp) / "Active.md"
+            note.write_bytes(b"---\nstatus: active\n---\nBroken \xff text.\n")
+            with patch.object(doctor, "RESULTS", []), contextlib.redirect_stdout(io.StringIO()):
+                doctor.check_active_note("active note", note)
+                self.assertEqual(doctor.RESULTS, [True, False])
+            with patch.object(doctor, "RESULTS", []), \
+                    patch.object(doctor, "read_note", return_value=None), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                doctor.check_active_note("active note", note)
+                self.assertEqual(doctor.RESULTS, [True, False])
+
+
 class DoctorOrphanCensusTests(unittest.TestCase):
     def test_lifecycle_run_role_is_directed_evidence_not_ambient_memory(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:

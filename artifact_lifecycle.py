@@ -6,9 +6,14 @@ path/type/pattern fields express only mechanically decidable constraints.
 """
 
 import json
-from pathlib import Path
+import argparse
+import sys
+from pathlib import Path, PureWindowsPath
 
-from note_chunks import frontmatter_fields
+from adapters import add_vault_argument
+from change_transaction import file_state
+from directory_audit import _is_reparse, scan_tree
+from note_chunks import frontmatter_fields, read_note
 
 
 DECLARATION = Path("memory/perspirator/artifact-lifecycle.json")
@@ -26,7 +31,7 @@ def load_lifecycle(vault):
     path = Path(vault) / DECLARATION
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read artifact lifecycle declaration: {exc}") from exc
     entries = payload.get("artifacts") if isinstance(payload, dict) else None
     if not isinstance(entries, list) or not entries:
@@ -47,8 +52,13 @@ def load_lifecycle(vault):
                 f"{name}: unknown validation class: {validation!r}")
         if not isinstance(entry.get("retire_when"), str) or not entry["retire_when"].strip():
             raise ValueError(f"{name}: missing explanatory retire_when")
-        relative = Path(str(entry.get("path", "")))
-        if not str(relative) or relative.is_absolute() or ".." in relative.parts:
+        raw_path = entry.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(f"{name}: path must be vault-relative")
+        relative = Path(raw_path)
+        if (relative.anchor or PureWindowsPath(raw_path).anchor
+                or relative == Path(".") or ".." in relative.parts
+                or ".." in PureWindowsPath(raw_path).parts):
             raise ValueError(f"{name}: path must be vault-relative")
         path_type = entry.get("path_type")
         if path_type is not None and path_type not in PATH_TYPES:
@@ -122,9 +132,112 @@ def lifecycle_problems(vault, entries):
         for path in sorted(target.glob(pattern)):
             if path.name.casefold() in exempt:
                 continue
-            text = path.read_text(encoding="utf-8-sig", errors="replace")
+            try:
+                text = read_note(path)
+            except ValueError as exc:
+                problems.append(f"{entry['name']}: {path.name} is unreadable: {exc}")
+                continue
+            if text is None:
+                problems.append(f"{entry['name']}: {path.name} is unreadable")
+                continue
             state = str(frontmatter_fields(text).get(field, "")).casefold()
             if state in forbidden:
                 problems.append(
                     f"{entry['name']}: {path.name} is terminal ({field}: {state})")
     return problems
+
+
+def inventory(vault, entries, names):
+    """Observe explicitly selected artifact trees using the shared safe scanner.
+
+    Include every regular file except declared exemptions, not just files whose
+    status happens to trigger a validation rule. Metadata is untrusted content;
+    neither a terminal state nor a missing retention field authorises removal.
+    """
+    vault = Path(vault).expanduser().resolve(strict=True)
+    requested = set(names)
+    known = {entry["name"] for entry in entries}
+    if not requested or requested - known:
+        raise ValueError("select declared artifacts by name; unknown: "
+                         + ", ".join(sorted(requested - known)))
+    results = []
+    for entry in entries:
+        if entry["name"] not in requested:
+            continue
+        result = {"name": entry["name"], "path": entry["path"],
+                  "role": entry["role"], "validation": entry["validation"],
+                  "retire_when": entry["retire_when"], "files": [],
+                  "boundaries": [], "status": "complete"}
+        results.append(result)
+        target = vault / entry["path"]
+        try:
+            # scan_tree refuses child reparses. Check the declared root and
+            # its ancestors too, before that scanner resolves its root.
+            current = vault
+            for part in Path(entry["path"]).parts:
+                current /= part
+                if _is_reparse(current):
+                    raise ValueError(f"reparse boundary: {current.relative_to(vault)}")
+            if target.is_dir():
+                scanned, boundaries, _ = scan_tree(target)
+                paths = [record.path for record in scanned]
+                result["boundaries"] = boundaries
+            elif target.is_file():
+                paths = [target]
+            else:
+                raise ValueError("artifact is not a regular file or directory")
+        except FileNotFoundError:
+            result["status"] = "missing-optional" if entry.get("optional") else "unavailable"
+            continue
+        except (OSError, ValueError) as exc:
+            result.update(status="unavailable", error=str(exc))
+            continue
+        exempt = {str(value).casefold() for value in entry.get("exempt", [])}
+        for path in paths:
+            if path.name.casefold() in exempt:
+                continue
+            observed = {"path": path.relative_to(vault).as_posix()}
+            result["files"].append(observed)
+            try:
+                if _is_reparse(path):
+                    raise ValueError("file became a reparse boundary")
+                before = path.stat()
+                state = file_state(path, include_bytes=True)
+                if not state["exists"]:
+                    raise ValueError("file disappeared during observation")
+                observed.update(sha256=state["sha256"], size=state["size"], status="complete")
+                if path.suffix.casefold() == ".md":
+                    observed["frontmatter"] = frontmatter_fields(
+                        state["bytes"].decode("utf-8-sig"))
+                after = path.stat()
+                if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    observed.update(status="indeterminate", error="file changed during observation")
+                    result["status"] = "partial"
+            except (OSError, UnicodeError, ValueError) as exc:
+                observed.update(status="unavailable", error=str(exc))
+                result["status"] = "partial"
+        if result["boundaries"]:
+            result["status"] = "partial"
+    return {"status": "partial" if any(r["status"] in ("partial", "unavailable")
+                                         for r in results) else "complete",
+            "scope": "selected declared trees; regular files; no reparse traversal",
+            "artifacts": results}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_vault_argument(parser)
+    parser.add_argument("--artifact", action="append", required=True, metavar="NAME",
+                        help="inventory this declared artifact; repeat for another tree")
+    args = parser.parse_args(argv)
+    try:
+        payload = inventory(args.vault, load_lifecycle(args.vault), args.artifact)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload["status"] == "complete" else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
