@@ -14,12 +14,11 @@ DRM, unavailable native readers and unsupported formats are reported.
 
 import argparse
 import hashlib
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from contracts import provider_result, source_record
+from contracts import emit_json_utf8, provider_result, source_record
 from document_text import (DEFAULT_CHARS, DEFAULT_CONTEXT, DocumentError,
                            parse_document, select_text, validate_selection, validate_ocr)
 
@@ -157,11 +156,7 @@ def main(argv=None):
                    context=getattr(args, "context", DEFAULT_CONTEXT), limit=args.limit,
                    max_bytes=args.max_bytes, max_pdf_pages=args.max_pdf_pages,
                    ocr=args.ocr, max_ocr_pages=args.max_ocr_pages, ocr_language=args.ocr_language)
-    payload = (json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    if hasattr(sys.stdout, "buffer"):
-        sys.stdout.buffer.write(payload)
-    else:
-        sys.stdout.write(payload.decode("utf-8"))
+    emit_json_utf8(result)
     return 0 if result["status"] in {"complete", "partial"} else 2
 
 

@@ -71,7 +71,7 @@ from urllib.request import (
     HTTPRedirectHandler, ProxyHandler, Request, build_opener,
 )
 
-from contracts import provider_result, validate_provider_result
+from contracts import emit_json_utf8, provider_result, validate_provider_result
 from document_query import TEXT_OPERATIONS, add_text_arguments, input_query, text_result
 from document_text import (
     DEFAULT_CHARS, DEFAULT_CONTEXT, DocumentError, FORMATS as TEXT_FORMATS,
@@ -1600,18 +1600,6 @@ def arguments(argv=None):
     args = parser.parse_args(argv)
     args.query = input_query(args, parser)
     return args
-
-
-def emit_json_utf8(value, *, indent=2, stream=None):
-    """Write one JSON result as explicit UTF-8, independent of Windows ACP."""
-    stream = sys.stdout if stream is None else stream
-    payload = (json.dumps(value, ensure_ascii=False, indent=indent) + "\n").encode(
-        "utf-8", errors="strict")
-    binary = getattr(stream, "buffer", None)
-    if binary is not None:
-        binary.write(payload)
-    else:  # StringIO and other test/embedding streams have no binary layer.
-        stream.write(payload.decode("utf-8"))
 
 
 def main(argv=None):

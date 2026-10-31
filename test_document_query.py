@@ -55,6 +55,31 @@ def blank_pdf():
 
 
 class DocumentExtractionTests(unittest.TestCase):
+    def test_local_cli_preserves_unicode_on_binary_and_embedded_text_streams(self):
+        class BinaryOutput:
+            encoding = "ascii"
+
+            def __init__(self):
+                self.buffer = io.BytesIO()
+
+            def write(self, text):
+                raise AssertionError("native JSON must bypass the host text codec")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unicode.txt"
+            original = "Ānanda – criticism and error correction.".encode("utf-8")
+            path.write_bytes(original)
+            for output in (BinaryOutput(), io.StringIO()):
+                with self.subTest(stream=type(output).__name__), \
+                        patch.object(dq.sys, "stdout", output):
+                    result = dq.main(["--path", str(path), "read", "--section", "1"])
+                emitted = (output.buffer.getvalue().decode("utf-8")
+                           if hasattr(output, "buffer") else output.getvalue())
+                self.assertEqual(result, 0)
+                self.assertEqual(json.loads(emitted)["records"][0]["text"],
+                                 original.decode("utf-8"))
+                self.assertEqual(path.read_bytes(), original)
+
     def test_spine_order_inline_prose_and_multiple_occurrences(self):
         parsed = dt.parse_document(epub(), "EPUB")
         self.assertTrue(parsed["extraction_complete"])

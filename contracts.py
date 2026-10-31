@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Stable contracts shared by source and evidence-provider adapters."""
 
+import json
 import re
+import sys
 
 
 LOCATOR = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+$", re.IGNORECASE)
@@ -9,6 +11,18 @@ SOURCE_COMPLETENESS = {"complete", "partial", "indeterminate"}
 WITHDRAWAL_STATES = {"active", "withdrawn"}
 PROVIDER_STATUSES = {"complete", "partial", "unavailable", "stale",
                      "indeterminate"}
+
+
+def emit_json_utf8(value, *, indent=2, stream=None):
+    """Write one provider result as UTF-8, independent of the host code page."""
+    stream = sys.stdout if stream is None else stream
+    payload = (json.dumps(value, ensure_ascii=False, indent=indent) + "\n").encode(
+        "utf-8", errors="strict")
+    binary = getattr(stream, "buffer", None)
+    if binary is not None:
+        binary.write(payload)
+    else:  # StringIO and other embedding streams have no binary layer.
+        stream.write(payload.decode("utf-8"))
 
 
 def source_record(source_id, text, locator, *, provider, completeness="complete",
