@@ -18,6 +18,7 @@ runtime, policies, project explanations, and run reports.
 | Host discovery | installed adapter generated from `SKILL.md` |
 | Run loading and question-to-tool routing | `<vault>/memory/perspirator/Bootstrap.md` |
 | Explanatory method and Theory of LLMs | `<vault>/memory/perspirator/Perspirator.md` |
+| Pre-delivery draft criticism | `<vault>/memory/perspirator/Error Correction role.md` |
 | Editable semantic and write policies | `<vault>/memory/policies/*.md` |
 | Executable mechanisms and enforced invariants | this repository |
 | Past execution evidence | `<vault>/memory/perspirator/runs/` |
@@ -25,9 +26,10 @@ runtime, policies, project explanations, and run reports.
 Installed adapters and copied scripts are generated artifacts. They do not own
 policy. Run `doctor.py` from the repository, or supply its canonical `SKILL.md`
 with `--source`, to check drift against that independent source. An installed
-doctor without a canonical source checks local structure and ownership and reports source
-comparison as unavailable. Run reports are evidence about past work, never a
-second current runtime.
+doctor without a canonical source checks local structure and ownership and
+reports source comparison as unavailable. These checks do not judge an
+argument or whether a draft answered the task. Run reports are evidence about
+past work, never a second current runtime.
 
 ## How a run starts
 
@@ -46,6 +48,9 @@ Bootstrap.md ──> active runtime + relevant policies
         |
         v
 agent draws out implications, assumptions, consequences, and conflicts
+        |
+        v
+self-pass under Error Correction role, as the active runtime requires
         |
         v
 human collaborator criticises or creates knowledge; permitted changes are validated
@@ -95,40 +100,15 @@ owns host names, aliases, directories, invocation text, and validation options.
 The same module owns the shared relative-file install surface, including
 contract declarations and canonical fixtures.
 
-For the local Calibre provider, configure Calibre's built-in Content Server on
-a literal loopback address with local write disabled. The adapter defaults to
-`http://127.0.0.1:8081`, refuses hostnames and non-loopback IPs, never opens
-`metadata.db`, and exposes no mutation command. It can read metadata, search
-the library, one book or a metadata-filtered subset using Calibre's separately
-enabled full-text index, and
-recover desktop-viewer records embedded in a bounded EPUB copy, or standard
-page annotations embedded in a bounded PDF copy. PDF annotations are read-only
-evidence: the PDF remains their canonical owner, page rectangles and
-quadrilaterals remain native anchors, and every annotation gets a unique
-`calibre-pdf://` source locator plus a separate book-level `calibre://` reader
-locator. The provider does not pretend Calibre's reflow viewer can reopen those
-coordinates. A geometry-only mark stays visible as partial provider evidence
-instead of becoming invented source prose. Full-text results are
-representative book-format snippets, not every occurrence or a whole-book
-extraction; embedded records do not stand for every Calibre or external-reader
-annotation namespace. Run
-`python calibre_query.py --help` for setup requirements and query syntax.
+Native providers also need their own application setup. Calibre requires a
+literal-loopback Content Server with local write disabled; the adapter never
+opens `metadata.db` or mutates the library. Anki and Obsidian availability must
+likewise be established through their own providers.
 
-When a representative snippet is insufficient, the same provider lists
-sections/pages, reads bounded continuations and searches multiple literal
-passages in a served book. `document_query.py` exposes the same mechanism for
-an explicitly named local file. EPUB reading order comes from its package
-spine; PDF positions are physical pages; DOCX uses stored paragraph text; legacy
-DOC uses an isolated installed Windows Word reader over a temporary copy.
-Normalized character offsets and source hashes identify the extracted
-representation without pretending they are native ebook page numbers or
-reader geometry. PDF page listing avoids text extraction, and a selected-page
-read avoids parsing unrelated pages. Optional `--ocr` uses Windows' local OCR
-on PDF pages without text, with recognition explicitly kept as partial derived
-evidence. It changes neither a PDF nor Calibre's index. Unsupported formats,
-unavailable readers/languages, extraction bounds and unobserved surfaces remain
-visible. Query files avoid shell quoting, and metadata has an optional compact
-projection; default metadata and annotation evidence are preserved.
+For supported operations, dependencies and observation limits, start with the
+relevant command's `--help`. Calibre/document reading and native annotation
+ownership are explained in `<vault>/memory/projects/Reading Integration.md`;
+the code, emitted scope and tests own exact coverage and locator contracts.
 
 ## Development boundary
 
@@ -165,10 +145,11 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 
 ## Repository entry points
 
-- `SKILL.md` — minimal host-neutral locator template;
-- `install.py` and `adapters.py` — generated host packaging;
-- `doctor.py` — runtime, contract, lifecycle, and installed-copy validation;
-- `contracts.py` — shared minimal provider/source boundaries; and
+- [SKILL.md](SKILL.md) — minimal host-neutral locator template;
+- [install.py](install.py) and [adapters.py](adapters.py) — generated host packaging;
+- [doctor.py](doctor.py) — runtime, contract, lifecycle, and installed-copy validation;
+- [run_check.py](run_check.py) — advisory report headings loaded from the vault README;
+- [contracts.py](contracts.py) — shared minimal provider/source boundaries; and
 - each tool's `--help` plus its tests — canonical executable interface.
 
 For current behaviour, begin with the configured vault's `Bootstrap.md`, not
