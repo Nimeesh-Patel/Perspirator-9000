@@ -21,6 +21,7 @@ runtime, policies, project explanations, and run reports.
 | Pre-delivery draft criticism | `<vault>/memory/perspirator/Error Correction role.md` |
 | Selective role execution and parallel delegation | `<vault>/memory/perspirator/Role Delegation.md` |
 | Institutional correction from supplied knowledge | `<vault>/memory/perspirator/Optimism role.md` |
+| Task-specific context and explanatory reconstruction | `<vault>/memory/perspirator/Context Recovery role.md` |
 | Working problem records, handoffs and delivery | `<vault>/memory/policies/Error Correction.md` |
 | Editable semantic and write policies | `<vault>/memory/policies/*.md` |
 | Executable mechanisms and enforced invariants | this repository |
@@ -81,6 +82,15 @@ the relevant command's `--help`; the canonical role instructions remain in
 the vault rather than copied into custom host prompts.
 
 ## The open-system boundary
+
+Vault context recovery now has a nomination-to-reading route:
+`context_query.py nominate` retains exact-name and existing ranked evidence,
+source metadata and identity, and explicit preview/graph limits. Original
+selected notes enter the existing role handoff; Context Recovery's editable
+vault instructions own explaining their relationships and the supplied
+problem's evolution. No new vector index, universal profile, background
+process or semantic relevance score is introduced. Start with the command's
+`--help`; nomination is discovery, not a completed answer.
 
 Whole-computer scope is a federation of bounded native providers, not one
 universal database or global scan. Calibre, Anki, Obsidian, a filesystem, a
@@ -171,6 +181,8 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 - [run_check.py](run_check.py) — advisory report headings loaded from the vault README;
 - [role_harness.py](role_harness.py) — small role discovery surface, bounded exact
   handoff snapshots and response identity/freshness checks;
+- [context_query.py](context_query.py) — task-derived, identity-labelled vault
+  nominations using the shared batch rankers and original source readback;
 - [artifact_lifecycle.py](artifact_lifecycle.py) — read-only inventory of explicitly
   selected declared artifact trees; hashes and metadata inform lifecycle review;
 - [contracts.py](contracts.py) — shared minimal provider/source boundaries; and

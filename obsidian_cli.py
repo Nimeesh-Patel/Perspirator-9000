@@ -142,6 +142,12 @@ class ObsidianCLI:
             "backlinks": list(backlinks)[:self.limit],
             "links": list(links)[:self.limit],
             "properties": calls["properties"]["data"],
+            "coverage": {
+                "scope": "received-provider-response", "limit": self.limit,
+                "received": {"links": len(links), "backlinks": len(backlinks)},
+                "omitted": {"links": max(0, len(links) - self.limit),
+                            "backlinks": max(0, len(backlinks) - self.limit)},
+            },
         }
         self._context_cache[rel] = result
         return result

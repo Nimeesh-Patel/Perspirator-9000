@@ -240,7 +240,7 @@ def note_stamps(vault, config):
     stamps = {}
     for path in iter_notes(vault, config["exempt"] or None):
         stat = path.stat()
-        stamps[path.relative_to(vault).as_posix()] = [int(stat.st_mtime), stat.st_size]
+        stamps[path.relative_to(vault).as_posix()] = [stat.st_mtime_ns, stat.st_size]
     return stamps
 
 
@@ -549,13 +549,24 @@ def note_link_stems(vault, note):
 
 def filesystem_context(vault, note, refs, limit):
     path = vault / note
-    text = read_note(path) or ""
+    text = read_note(path)
+    if text is None:
+        return {"provider": "filesystem", "status": "unavailable", "path": note,
+                "error": f"cannot read exact note: {path}",
+                "links": [], "backlinks": [], "properties": {},
+                "coverage": {"scope": "unobserved", "limit": limit}}
     stem = path.stem
+    backlinks = sorted(p.relative_to(vault).as_posix()
+                       for p in refs.get(stem, set()))
+    links = extract_links(text)
     return {
         "provider": "filesystem", "status": "ok", "path": note,
-        "backlinks": sorted(p.relative_to(vault).as_posix()
-                            for p in refs.get(stem, set()))[:limit],
-        "links": extract_links(text)[:limit],
+        "backlinks": backlinks[:limit],
+        "links": links[:limit],
+        "coverage": {"scope": "filesystem-parser-observation", "limit": limit,
+                     "observed": {"links": len(links), "backlinks": len(backlinks)},
+                     "omitted": {"links": max(0, len(links) - limit),
+                                 "backlinks": max(0, len(backlinks) - limit)}},
         "properties": frontmatter_fields(text),
     }
 
@@ -585,8 +596,10 @@ def expand_graph(vault, results, config, mode, refs, cli=None):
     exempt = config.get("exempt") or ()
     notes = [result["note"] for result in results[:limit]]
     if selected == "filesystem":
-        return {"provider": "filesystem", "status": "ok",
-                "notes": [filesystem_context(vault, note, refs, limit) for note in notes]}
+        contexts = [filesystem_context(vault, note, refs, limit) for note in notes]
+        return {"provider": "filesystem",
+                "status": "ok" if all(item["status"] == "ok" for item in contexts) else "partial",
+                "notes": contexts}
 
     cli = cli or ObsidianCLI(
         vault, timeout=config["graph"]["timeout"], limit=limit)
@@ -611,7 +624,8 @@ def expand_graph(vault, results, config, mode, refs, cli=None):
                 expanded.append(context)
                 continue
             fallback = filesystem_context(vault, note, refs, limit)
-            fallback["status"] = "fallback"
+            if fallback["status"] == "ok":
+                fallback["status"] = "fallback"
             fallback["issue"] = context.get("error")
             expanded.append(fallback)
         some_obsidian = len(failures) < len(contexts)
@@ -703,12 +717,16 @@ def lexical_scores(query_text, meta, eligible, cosine):
     containing the word score 1.0, and "the closest of the units that all
     contain your term" is a better order than filesystem order.
     """
-    key = id(meta)
-    if key not in _IDF_CACHE:
+    cached = _IDF_CACHE.get("last")
+    if cached is None or cached[0] is not meta:
         texts = [unit["text"] for unit in meta]
-        _IDF_CACHE[key] = (inverse_document_frequency(texts),
-                           [content_words(text) for text in texts])
-    idf, words = _IDF_CACHE[key]
+        cached = (meta, inverse_document_frequency(texts),
+                  [content_words(text) for text in texts])
+        # Retain the actual owner, not a recyclable id, and only the last
+        # corpus. The local tuple also remains coherent if another caller
+        # replaces the shared cache while this query is being scored.
+        _IDF_CACHE["last"] = cached
+    _, idf, words = cached
     query_words = content_words(query_text)
     scores = {}
     for index in eligible:
@@ -809,16 +827,64 @@ def print_match(result, header):
         print(f"     {item['snippet']}")
 
 
-def cmd_match(args):
-    loaded = load_index(args.vault, index=args.index,
-                        refresh_index=not args.no_refresh)
+def match_batch(vault, queries, *, index=None, refresh_index=True,
+                rank="both", corpus=None, side=None, unit=None, folder=None,
+                k=10, graph="configured"):
+    """Rank explicit query records with one index/model/graph-cache session.
+
+    Queries contain ``text`` and optional vault-relative ``note`` and ``file``
+    provenance. Results retain each query's independent ranking and graph
+    boundary. This API does not print, select sources, or infer relevance.
+    """
+    from types import SimpleNamespace
+    queries = list(queries)
+    if not queries or any(not isinstance(query, dict)
+                          or not isinstance(query.get("text"), str)
+                          or not query["text"].strip() for query in queries):
+        raise ValueError("batch needs nonempty query text for every query")
+    if k <= 0:
+        raise ValueError("k must be positive")
+    if rank not in ("both", "embedding", "lexical"):
+        raise ValueError("unknown ranker selection")
+    if graph not in ("configured", "obsidian", "filesystem", "none"):
+        raise ValueError("unknown graph selection")
+    for name, value, allowed in (
+            ("corpus", corpus, ("all", "vault", "memory")),
+            ("side", side, ("all", "problem", "answer", "none")),
+            ("unit", unit, ("all", "problem_identity", "conjecture", "block"))):
+        if value is not None and value not in allowed:
+            raise ValueError(f"unknown {name} selection")
+    args = SimpleNamespace(rank=rank, corpus=corpus, side=side, unit=unit,
+                           folder=folder, k=k, graph=graph)
+    queries = [dict(query, note=query.get("note"), file=query.get("file"))
+               for query in queries]
+    loaded = load_index(vault, index=index, refresh_index=refresh_index)
     vault, config = loaded["vault"], loaded["config"]
-    stale = loaded["stale"]
-    if stale and (stale["notes_changed"] or stale["notes_removed"]):
-        print(f"refreshed: {stale['notes_changed']} notes changed, "
-              f"{stale['notes_removed']} removed, {stale['embedded']} units "
-              f"re-embedded ({stale['seconds']}s)", file=sys.stderr)
     header, meta, vectors = loaded["header"], loaded["meta"], loaded["vectors"]
+    embedder = Embedder(config["model"], config["formation"]["max-tokens"])
+    query_vectors = embedder([query["text"] for query in queries])
+    refs, _, _ = vault_links(vault, excludes=config["exempt"] or None)
+    selected = config["graph"]["provider"] if graph == "configured" else graph
+    cli = (ObsidianCLI(vault, timeout=config["graph"]["timeout"],
+                       limit=config["graph"]["limit"])
+           if selected == "obsidian" else None)
+    matches = [match_query(vault, config, meta, vectors, query, vector,
+                           args, refs, cli=cli)
+               for query, vector in zip(queries, query_vectors)]
+    result_header = public_header(header)
+    result_header["freshness"] = match_freshness(
+        vault, header, matches, refresh_index)
+    refresh_report = loaded["stale"]
+    if refresh_report is not None:
+        refresh_report = dict(refresh_report)
+        if isinstance(refresh_report.get("path"), Path):
+            refresh_report["path"] = str(refresh_report["path"])
+    return {"header": result_header, "queries": matches,
+            "refresh": refresh_report}
+
+
+def cmd_match(args):
+    vault = Path(args.vault).expanduser().resolve()
 
     queries = []
     if args.file:
@@ -846,27 +912,20 @@ def cmd_match(args):
         suffix = f" in {empty['file']}" if empty["file"] else ""
         raise SystemExit(f"STOP: empty query text{suffix}")
 
-    embedder = Embedder(config["model"], config["formation"]["max-tokens"])
-    query_vectors = embedder([query["text"] for query in queries])
-    refs, _, _ = vault_links(vault, excludes=config["exempt"] or None)
-    selected = (config["graph"]["provider"]
-                if args.graph == "configured" else args.graph)
-    cli = (ObsidianCLI(vault, timeout=config["graph"]["timeout"],
-                       limit=config["graph"]["limit"])
-           if selected == "obsidian" else None)
-    matches = [match_query(vault, config, meta, vectors, query, vector,
-                           args, refs, cli=cli)
-               for query, vector in zip(queries, query_vectors)]
-    freshness = match_freshness(vault, header, matches, not args.no_refresh)
-    result_header = public_header(header)
-    result_header["freshness"] = freshness
+    batch = match_batch(
+        args.vault, queries, index=args.index, refresh_index=not args.no_refresh,
+        rank=getattr(args, "rank", "both"), corpus=args.corpus, side=args.side,
+        unit=args.unit, folder=args.folder, k=args.k, graph=args.graph)
+    result_header, matches = batch["header"], batch["queries"]
+    freshness, stale = result_header["freshness"], batch["refresh"]
+    if stale and (stale["notes_changed"] or stale["notes_removed"]):
+        print(f"refreshed: {stale['notes_changed']} notes changed, "
+              f"{stale['notes_removed']} removed, {stale['embedded']} units "
+              f"re-embedded ({stale['seconds']}s)", file=sys.stderr)
 
     if args.json:
         if len(matches) == 1:
-            payload = {"query_note": matches[0]["query_note"],
-                       "header": result_header,
-                       "results": matches[0]["results"],
-                       "graph": matches[0]["graph"]}
+            payload = {**matches[0], "header": result_header}
         else:
             payload = {"header": result_header, "queries": matches}
         print(json.dumps(payload, ensure_ascii=False, indent=1))
@@ -884,7 +943,7 @@ def cmd_match(args):
                 print()
             label = queries[offset]["file"] or f"text query {offset + 1}"
             print(f"===== {label} =====")
-        print_match(result, header)
+        print_match(result, {**result_header, "chunks": result_header["units"]})
     return 0
 
 

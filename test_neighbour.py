@@ -4,6 +4,7 @@
 import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -604,6 +605,66 @@ class ContractSuite(unittest.TestCase):
         with redirect_stdout(captured):
             result = main()
         self.assertEqual(result, 0, captured.getvalue())
+
+
+class NanosecondRefreshTests(unittest.TestCase):
+    def test_lexical_cache_tracks_actual_corpus_owner_and_stays_bounded(self):
+        first = [{"text": "alpha"}, {"text": "other"}]
+        second = [{"text": "bravo"}, {"text": "different"}]
+        with patch.object(nb, "_IDF_CACHE", {}), \
+                patch.object(nb, "id", return_value=7, create=True):
+            self.assertGreater(nb.lexical_scores("alpha", first, [0, 1], [0, 0])[0], 0)
+            self.assertGreater(nb.lexical_scores("bravo", second, [0, 1], [0, 0])[0], 0)
+            self.assertEqual(nb.lexical_scores("alpha", second, [0, 1], [0, 0])[0], 0)
+            self.assertEqual(len(nb._IDF_CACHE), 1)
+            self.assertIs(nb._IDF_CACHE["last"][0], second)
+
+    def test_graph_clipping_exposes_omitted_received_items(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "a.md", "[[one]] [[two]] [[three]]")
+            refs = {"a": {root / "b.md", root / "c.md", root / "d.md"}}
+            context = nb.filesystem_context(root, "a.md", refs, 2)
+            self.assertEqual(context["coverage"]["observed"],
+                             {"links": 3, "backlinks": 3})
+            self.assertEqual(context["coverage"]["omitted"],
+                             {"links": 1, "backlinks": 1})
+
+            cli = ObsidianCLI(root, limit=2)
+            with patch.object(cli, "probe", return_value={"ok": True}), \
+                    patch.object(cli, "path_command", side_effect=[
+                        {"ok": True, "data": ["b.md", "c.md", "d.md"]},
+                        {"ok": True, "data": ["one", "two", "three"]},
+                        {"ok": True, "data": {}},
+                    ]):
+                native = cli.note_context("a.md")
+            self.assertEqual(native["coverage"]["scope"], "received-provider-response")
+            self.assertEqual(native["coverage"]["omitted"],
+                             {"links": 1, "backlinks": 1})
+            unavailable = nb.filesystem_context(root, "missing.md", refs, 2)
+            self.assertEqual(unavailable["status"], "unavailable")
+            self.assertNotIn("observed", unavailable["coverage"])
+
+    def test_equal_size_edit_in_same_second_replaces_cached_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "memory/perspirator/Neighbour Retrieval.md", CONFIG)
+            note = write(root, "a.md", "problem a?\n***\nconjecture a.\n")
+            start = 1700000000100000000
+            os.utime(note, ns=(start, start))
+            config = nb.load_config(root)
+            nb.refresh(root, config, config["index"], embedder=StubEmbedder())
+            before_size = note.stat().st_size
+            note.write_text("problem b?\n***\nconjecture b.\n", encoding="utf-8")
+            os.utime(note, ns=(start + 1000000, start + 1000000))
+            self.assertEqual(note.stat().st_size, before_size)
+            report = nb.refresh(root, config, config["index"], embedder=StubEmbedder())
+            self.assertEqual(report["notes_changed"], 1)
+            loaded = nb.load_index(root, refresh_index=False)
+            text = "\n".join(item["text"] for item in loaded["meta"]
+                             if item["note"] == "a.md")
+            self.assertIn("problem b?", text)
+            self.assertNotIn("problem a?", text)
 
 
 class MatchFreshnessTests(unittest.TestCase):

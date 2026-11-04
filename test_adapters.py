@@ -81,7 +81,7 @@ class AdapterDeclarationTests(unittest.TestCase):
             for relative in (
                     "contract_copies.json",
                     "fixtures/problem_note_conformance.json",
-                    "role_harness.py"):
+                    "role_harness.py", "context_query.py"):
                 self.assertTrue((destination / relative).is_file(), relative)
                 source = Path(__file__).resolve().parent / relative
                 self.assertEqual((destination / relative).read_bytes(), source.read_bytes())
