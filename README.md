@@ -19,6 +19,8 @@ runtime, policies, project explanations, and run reports.
 | Run loading and question-to-tool routing | `<vault>/memory/perspirator/Bootstrap.md` |
 | Explanatory method and Theory of LLMs | `<vault>/memory/perspirator/Perspirator.md` |
 | Pre-delivery draft criticism | `<vault>/memory/perspirator/Error Correction role.md` |
+| Selective role execution and parallel delegation | `<vault>/memory/perspirator/Role Delegation.md` |
+| Institutional correction from supplied knowledge | `<vault>/memory/perspirator/Optimism role.md` |
 | Working problem records, handoffs and delivery | `<vault>/memory/policies/Error Correction.md` |
 | Editable semantic and write policies | `<vault>/memory/policies/*.md` |
 | Executable mechanisms and enforced invariants | this repository |
@@ -60,6 +62,23 @@ human collaborator criticises or creates knowledge; permitted changes are valida
 There is no hidden daemon. Editing the vault runtime or a policy changes the
 next run immediately. Changing repository code or an installed path requires a
 reinstall because installation copies the toolkit.
+
+## On-demand roles
+
+The main agent can inspect the small `role_harness.py list --vault <path>`
+surface, select a role whose stated problem is present, and give it a bounded
+packet in a fresh native worker context. Independent work may run in parallel;
+the complete main conversation and every framework need not be copied into
+each worker. `Role Delegation.md` owns selection, handoff, return, dependency
+and authority meaning. The active runtime's self-pass remains in force.
+
+`role_harness.py packet` snapshots exact selected instructions and sources
+within an explicit byte bound; `check` detects packet tampering and stale
+inputs and binds a response to the reviewed revision. Neither operation runs
+a model, proves substantive review or grants writes. The host supplies actual
+delegation, and unavailable separate execution must be disclosed. Start with
+the relevant command's `--help`; the canonical role instructions remain in
+the vault rather than copied into custom host prompts.
 
 ## The open-system boundary
 
@@ -150,6 +169,8 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 - [install.py](install.py) and [adapters.py](adapters.py) — generated host packaging;
 - [doctor.py](doctor.py) — runtime, contract, lifecycle, and installed-copy validation;
 - [run_check.py](run_check.py) — advisory report headings loaded from the vault README;
+- [role_harness.py](role_harness.py) — small role discovery surface, bounded exact
+  handoff snapshots and response identity/freshness checks;
 - [artifact_lifecycle.py](artifact_lifecycle.py) — read-only inventory of explicitly
   selected declared artifact trees; hashes and metadata inform lifecycle review;
 - [contracts.py](contracts.py) — shared minimal provider/source boundaries; and
