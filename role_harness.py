@@ -8,6 +8,7 @@ workers, makes no semantic review judgment, and grants no permission to write.
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -44,11 +45,17 @@ def unique_object(pairs):
     return result
 
 
+def finite_json_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite JSON number: {value}")
+    return number
+
+
 def json_text(text):
     try:
         return json.loads(text.removeprefix("\ufeff"), object_pairs_hook=unique_object,
-                          parse_constant=lambda x: (_ for _ in ()).throw(
-                              ValueError(f"non-finite JSON number: {x}")))
+                          parse_float=finite_json_float, parse_constant=finite_json_float)
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON: {exc}") from exc
 

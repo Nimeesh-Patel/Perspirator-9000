@@ -200,6 +200,13 @@ class RoleHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
             self.build()
 
+    def test_json_number_conversion_cannot_introduce_nonfinite_values(self):
+        for token in ("NaN", "Infinity", "-Infinity", "1e400", "-1e400"):
+            with self.subTest(token=token), self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+                rh.json_text('{"extension":{"nested":[' + token + ']}}')
+        self.assertEqual(rh.json_text('{"finite":[1e308,-0.125,42]}'),
+                         {"finite": [1e308, -0.125, 42]})
+
     def test_source_completeness_is_preserved_without_claiming_total_coverage(self):
         self.request["sources"][0]["completeness"] = "reader-specific"
         self.save_request()
