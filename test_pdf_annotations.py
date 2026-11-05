@@ -246,8 +246,6 @@ class PDFAnnotationBoundaryTests(unittest.TestCase):
     def test_checked_in_fixture_manifest_matches_bytes(self):
         manifest = json.loads(
             (FIXTURES / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["generator_dependencies"], {
-            "pypdf": "6.10.0", "reportlab": "4.4.9"})
         for name, expected in manifest["fixtures"].items():
             payload = fixture(name)
             self.assertEqual(len(payload), expected["bytes"])

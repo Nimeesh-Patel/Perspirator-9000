@@ -2,8 +2,8 @@
 """Distributional neighbours with inspectable units and graph context.
 
 Embeddings propose nearby retrieval units. They do not decide semantic identity,
-placement, criticism, or redundancy. Unit formation and graph providers are
-selected by the active vault configuration, while this file owns the mechanism.
+placement, criticism, or redundancy. Retrieval scope, token budget and graph
+providers are selected by the active vault configuration.
 """
 
 import argparse
@@ -20,20 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adapters import add_vault_argument  # noqa: E402
-from note_chunks import (bullets, chunks_for_note, extract_links,  # noqa: E402
+from note_chunks import (FORMATION, bullets, chunks_for_note, extract_links,  # noqa: E402
                          frontmatter_fields, iter_notes, read_note, section,
                          vault_links)
 from obsidian_cli import ObsidianCLI  # noqa: E402
 
 CONFIG_NOTE = ("memory", "perspirator", "Neighbour Retrieval.md")
-
-FORMATION = {
-    "problem": "identity-and-contextual-conjecture",
-    "non-problem": "authored-blocks",
-    "oversize": "authored-boundaries-then-token-windows",
-    "embedding-oversize": "mean-pooled-token-windows",
-}
-
 
 WORD = re.compile(r"[a-z][a-z-]{2,}")
 
@@ -121,10 +113,6 @@ def load_config(vault):
         indexed[key] = [part.strip() for part in value.split(",") if part.strip()]
 
     formation = keyed_bullets(text, "## Unit formation")
-    for key, expected in FORMATION.items():
-        if formation.get(key) != expected:
-            raise SystemExit(f"STOP: {path} must select '{key}: {expected}' under "
-                             "'## Unit formation'")
     max_tokens = required_int(formation, "max-tokens", path, minimum=16)
 
     graph = keyed_bullets(text, "## Graph expansion")
@@ -242,17 +230,6 @@ def note_stamps(vault, config):
         stat = path.stat()
         stamps[path.relative_to(vault).as_posix()] = [stat.st_mtime_ns, stat.st_size]
     return stamps
-
-
-def formation_args(config, embedder):
-    form = config["formation"]
-    return {
-        "max_tokens": form["max-tokens"],
-        "token_length": embedder.token_length,
-        "problem_strategy": form["problem"],
-        "nonproblem_strategy": form["non-problem"],
-        "oversize_strategy": form["oversize"],
-    }
 
 
 REPLACE_ATTEMPTS = 12
@@ -421,9 +398,11 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
 
     if changed:
         embedder = embedder or Embedder(config["model"], config["formation"]["max-tokens"])
-        options = formation_args(config, embedder)
         for rel in sorted(changed):
-            for chunk in chunks_for_note(vault / rel, vault, **options):
+            for chunk in chunks_for_note(
+                    vault / rel, vault,
+                    max_tokens=config["formation"]["max-tokens"],
+                    token_length=embedder.token_length):
                 if keep_chunk(chunk, config):
                     chunks.append(chunk)
 

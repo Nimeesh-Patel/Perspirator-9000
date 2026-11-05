@@ -74,18 +74,6 @@ def validate_source_record(record):
 
 def provider_result(provider, capability, status, *, scope, freshness,
                     records=None, errors=None, status_explanation=None, **fields):
-    if not isinstance(provider, str) or not provider.strip():
-        raise ValueError("provider must be non-empty text")
-    if not isinstance(capability, str) or not capability.strip():
-        raise ValueError("provider capability must be non-empty text")
-    if (not isinstance(status, str) or not status.strip()
-            or (status not in PROVIDER_STATUSES and not status_explanation)):
-        raise ValueError(
-            "provider status must be standard or carry status_explanation")
-    if not isinstance(scope, dict):
-        raise ValueError("provider scope must be an object")
-    if not isinstance(freshness, dict):
-        raise ValueError("provider freshness must be an object")
     result = {
         "provider": provider,
         "capability": capability,
@@ -98,7 +86,7 @@ def provider_result(provider, capability, status, *, scope, freshness,
     if status_explanation:
         result["status_explanation"] = status_explanation
     result.update(fields)
-    return result
+    return validate_provider_result(result)
 
 
 def validate_provider_result(result):

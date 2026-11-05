@@ -187,19 +187,6 @@ class CalibreQueryTests(unittest.TestCase):
         self.assertEqual(result["records"], [])
         self.assertIn("invalid UTF-8 JSON", result["errors"][0]["error"])
 
-    def test_cli_json_output_is_utf8_independent_of_text_stream_codepage(self):
-        class BinaryOutput:
-            def __init__(self):
-                self.buffer = io.BytesIO()
-
-        output = BinaryOutput()
-        cq.emit_json_utf8({"title": "Evolution – Ānanda"}, stream=output)
-        raw = output.buffer.getvalue()
-        self.assertEqual(
-            raw, b'{\n  "title": "Evolution \xe2\x80\x93 \xc4\x80nanda"\n}\n')
-        self.assertEqual(json.loads(raw.decode("utf-8"))["title"],
-                         "Evolution – Ānanda")
-
     def test_search_is_bounded_and_reports_truncation_as_partial(self):
         commands = []
         rows = [

@@ -1,26 +1,21 @@
 #!/usr/bin/env python3
 """Measure whether retrieval recovers relations the vault author already recorded.
 
-The standing question is whether this index actually finds related knowledge,
-and it has never been answered: `Neighbour Retrieval.md` says "whether it is
-semantic is what the evaluations test", and the only evaluation ever run was
-43 hand-judged pairs whose labels now sit misfiled in an unrelated note.
-
-Hand-labelling does not scale with the vault, so this uses ground truth the
-vault already contains. A `[[wikilink]]` between two notes is a relation the
-author asserted, so a ranker that cannot surface a note's own linked notes is
-not finding related knowledge — whatever its scores look like.
+An authored `[[wikilink]]` supplies a declared relation against which the shared
+rankers can be checked. This tool reports their recall for that link sample.
 
 What this measures and does not:
 
-- **Recall is meaningful.** A linked pair is related by the author's judgment,
-  so failing to retrieve it is a real miss.
+- **Recall has an identity and corpus limit.** The comparison uses lowercase
+  bare stems and vault-only candidate units. Equal basenames and cross-corpus
+  links are not resolved, so counts describe that approximation rather than
+  every native Obsidian relation.
 - **Precision is not measurable this way.** An unlinked result may be a genuine
   relation not yet noticed, which is the tool's whole purpose. Unlinked hits
   are therefore reported, never counted as errors.
 - **Links are biased toward relations already noticed.** High recall means the
   ranker agrees with what is already known; it says nothing about the
-  unnoticed relations that matter most. This is a floor, not a ceiling.
+  unnoticed relations that matter most.
 
 Examples:
     python evaluate_retrieval.py --vault "<vault>"
@@ -35,9 +30,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adapters import add_vault_argument  # noqa: E402
 from note_chunks import extract_links, iter_notes, read_note  # noqa: E402
-from neighbour import (Embedder, collapse_by_note, content_words,  # noqa: E402
-                       inverse_document_frequency, lexical_coverage,
-                       load_config, load_index, merge_rankers)
+from neighbour import (Embedder, lexical_scores, load_index,  # noqa: E402
+                       merge_rankers)
 from problem_half import parse_note  # noqa: E402
 
 
@@ -58,15 +52,15 @@ def authored_relations(vault, exempt):
                       for t in extract_links(text)},
         }
     known = set(stems)
-    for record in stems.values():
+    for stem, record in stems.items():
         record["links"] &= known
-        record["links"].discard(record["path"].lower())
+        record["links"].discard(stem)
     return {stem: rec for stem, rec in stems.items() if rec["links"]}
 
 
 def evaluate(vault, k, sample, seed):
-    config = load_config(vault)
     loaded = load_index(vault, refresh_index=False)
+    config = loaded["config"]
     meta, vectors = loaded["meta"], loaded["vectors"]
     records = authored_relations(vault, config["exempt"])
     keys = sorted(records)
@@ -74,8 +68,6 @@ def evaluate(vault, k, sample, seed):
         random.Random(seed).shuffle(keys)
         keys = keys[:sample]
 
-    idf = inverse_document_frequency([unit["text"] for unit in meta])
-    words = [content_words(unit["text"]) for unit in meta]
     embedder = Embedder(config["model"], config["formation"]["max-tokens"])
 
     modes = ("embedding", "lexical", "both")
@@ -90,11 +82,7 @@ def evaluate(vault, k, sample, seed):
         cosine = vectors @ query_vector
         eligible = [i for i, unit in enumerate(meta)
                     if unit["corpus"] == "vault" and stem_of[i] != key]
-        query_words = content_words(record["query"])
-        lexical = {}
-        for index in eligible:
-            base = lexical_coverage(query_words, words[index], idf)
-            lexical[index] = base + 1e-6 * float(cosine[index]) if base else 0.0
+        lexical = lexical_scores(record["query"], meta, eligible, cosine)
         total_links += len(record["links"])
         for mode in modes:
             order, _ = merge_rankers(eligible, meta, cosine, lexical, k, mode)

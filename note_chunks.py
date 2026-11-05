@@ -40,6 +40,12 @@ MEMORY_FOLDER = "memory"
 
 DEFAULT_EXCLUDES = NON_NOTE_FOLDERS
 DEFAULT_MAX_TOKENS = 256
+FORMATION = {
+    "problem": "identity-and-contextual-conjecture",
+    "non-problem": "authored-blocks",
+    "oversize": "authored-boundaries-then-token-windows",
+    "embedding-oversize": "mean-pooled-token-windows",
+}
 
 
 def read_note(path):
@@ -250,8 +256,7 @@ def _windows(full_text, start, end, budget, token_length):
     return out
 
 
-def _conjecture_units(path, vault_root, parsed, identity, max_tokens, token_length,
-                      oversize_strategy):
+def _conjecture_units(path, vault_root, parsed, identity, max_tokens, token_length):
     conjecture = parsed["conjecture"] or ""
     if not conjecture:
         return []
@@ -299,7 +304,7 @@ def _conjecture_units(path, vault_root, parsed, identity, max_tokens, token_leng
         start, end = group[0]["start"], group[-1]["end"]
         start, end, value = _trimmed_span(parsed["normalized"], start, end)
         strategy = ("token-window" if len(group) == 1 and group[0].get("window")
-                    else oversize_strategy)
+                    else FORMATION["oversize"])
         out.append(_unit(path, vault_root, value, start, end, "answer",
                          "conjecture", strategy, group[0]["heading"],
                          prefix + value))
@@ -307,10 +312,7 @@ def _conjecture_units(path, vault_root, parsed, identity, max_tokens, token_leng
 
 
 def chunks_for_note(path, vault_root, text=None, max_tokens=DEFAULT_MAX_TOKENS,
-                    token_length=None,
-                    problem_strategy="identity-and-contextual-conjecture",
-                    nonproblem_strategy="authored-blocks",
-                    oversize_strategy="authored-boundaries-then-token-windows"):
+                    token_length=None):
     """Form retrieval units for one note with complete provenance."""
     text = read_note(path) if text is None else text
     if text is None:
@@ -325,17 +327,17 @@ def chunks_for_note(path, vault_root, text=None, max_tokens=DEFAULT_MAX_TOKENS,
         if identity:
             out.append(_unit(path, vault_root, identity,
                              parsed["problem_start"], parsed["problem_end"],
-                             "problem", "problem_identity", problem_strategy,
+                             "problem", "problem_identity", FORMATION["problem"],
                              embedding_text=f"{path.stem}\n{identity}"))
         out.extend(_conjecture_units(path, vault_root, parsed, identity,
-                                     max_tokens, token_length, oversize_strategy))
+                                     max_tokens, token_length))
         return out
 
     out = []
     for block in _heading_blocks(parsed["body"], parsed["body_start"]):
         if token_length(block["text"]) <= max_tokens:
             out.append(_unit(path, vault_root, block["text"], block["start"],
-                             block["end"], "none", "block", nonproblem_strategy,
+                             block["end"], "none", "block", FORMATION["non-problem"],
                              block["heading"]))
             continue
         for start, end, value in _windows(normalized, block["start"], block["end"],

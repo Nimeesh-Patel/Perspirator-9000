@@ -19,8 +19,8 @@ declaration there.
 
 Python 3 is required for the structural tools. `neighbour.py` additionally
 needs numpy, torch, and transformers, which nothing else imports. Tests are
-grouped by contract: run `test_note_chunks.py`, `test_neighbour.py`, and
-`test_sources.py` for affected surfaces. Obsidian CLI availability is a
+grouped by contract: use `python -m unittest <affected_module>` for an affected
+surface or the full discovery command in README.md. Obsidian CLI availability is a
 capability, not a universal installation prerequisite. Run `doctor.py` with
 the target that was installed.
 

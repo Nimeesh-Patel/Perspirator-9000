@@ -10,6 +10,7 @@ import source_to_notes as stn
 import highlights_to_notes as hln
 import readera_highlights
 import x_posts
+from contracts import provider_result
 
 
 SOURCES = [
@@ -36,6 +37,23 @@ def x_fixture(status_id, text, screen_name="Example"):
 
 
 class SourceAdapterTests(unittest.TestCase):
+    def test_provider_constructor_preserves_envelope_contract(self):
+        fields = dict(provider="test", capability="read", status="complete",
+                      scope={}, freshness={})
+        for key, value in (("provider", None), ("provider", " "),
+                           ("capability", 1), ("capability", ""),
+                           ("status", None), ("status", " "),
+                           ("status", "custom"), ("scope", []), ("freshness", None)):
+            with self.subTest(field=key, value=value), self.assertRaises(ValueError):
+                provider_result(**(fields | {key: value}))
+        result = provider_result(**fields, records=iter([1]), errors=("error",),
+                                 extension={"kept": True})
+        self.assertEqual(result, fields | {"records": [1], "errors": ["error"],
+                                         "extension": {"kept": True}})
+        custom = provider_result(**(fields | {"status": "custom"}),
+                                 status_explanation="Provider-specific observation")
+        self.assertEqual(custom["status"], "custom")
+
     def test_x_identity_and_duplicate_handling(self):
         text = """
         https://x.com/alice/status/123?s=20
@@ -316,10 +334,6 @@ class SourceToNotesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed after validation"):
                 stn.write_notes(
                     notes, sources, vault, vault=vault, append_existing=True)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 def readera_backup(path, docs, meta=None):
@@ -707,3 +721,7 @@ class HighlightsToNotesTests(unittest.TestCase):
             src = self.write_bundle(tmp, [short])
             actions, _ = hln.plan(hln.read_bundle(src), vault)
             self.assertEqual(len(actions[0]["new"]), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

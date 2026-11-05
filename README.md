@@ -35,81 +35,20 @@ reports source comparison as unavailable. These checks do not judge an
 argument or whether a draft answered the task. Run reports are evidence about
 past work, never a second current runtime.
 
-## How a run starts
+## Runtime and tools
 
-```text
-host invokes Perspirator
-        |
-        v
-thin installed adapter
-        |
-        v
-Bootstrap.md ──> active runtime + relevant policies
-        |
-        +──> vault and Basic Memory context
-        +──> bounded native providers
-        +──> structural and transactional tools
-        |
-        v
-agent draws out implications, assumptions, consequences, and conflicts
-        |
-        v
-self-pass under Error Correction role, as the active runtime requires
-        |
-        v
-human collaborator criticises or creates knowledge; permitted changes are validated
-```
+Start with the configured vault's `Bootstrap.md`. It routes questions to
+mechanisms; each command's `--help`, code and tests own its detailed interface.
+`Role Delegation.md` owns selecting and running roles in separate contexts.
+`Vault Evolution.md` owns the open-system boundary between the vault and
+bounded native providers.
 
-There is no hidden daemon. Editing the vault runtime or a policy changes the
-next run immediately. Changing repository code or an installed path requires a
-reinstall because installation copies the toolkit.
+`role_harness.py` discovers roles and prepares exact, bounded handoffs;
+`context_query.py nominate` uses the shared rankers to nominate source notes
+for original-source reading. Their vault role instructions own interpretation.
 
-## On-demand roles
-
-The main agent can inspect the small `role_harness.py list --vault <path>`
-surface, select a role whose stated problem is present, and give it a bounded
-packet in a fresh native worker context. Independent work may run in parallel;
-the complete main conversation and every framework need not be copied into
-each worker. `Role Delegation.md` owns selection, handoff, return, dependency
-and authority meaning. The active runtime's self-pass remains in force.
-
-`role_harness.py packet` snapshots exact selected instructions and sources
-within an explicit byte bound; `check` detects packet tampering and stale
-inputs and binds a response to the reviewed revision. Neither operation runs
-a model, proves substantive review or grants writes. The host supplies actual
-delegation, and unavailable separate execution must be disclosed. Start with
-the relevant command's `--help`; the canonical role instructions remain in
-the vault rather than copied into custom host prompts.
-
-## The open-system boundary
-
-Vault context recovery now has a nomination-to-reading route:
-`context_query.py nominate` retains exact-name and existing ranked evidence,
-source metadata and identity, and explicit preview/graph limits. Original
-selected notes enter the existing role handoff; Context Recovery's editable
-vault instructions own explaining their relationships and the supplied
-problem's evolution. No new vector index, universal profile, background
-process or semantic relevance score is introduced. Start with the command's
-`--help`; nomination is discovery, not a completed answer.
-
-Whole-computer scope is a federation of bounded native providers, not one
-universal database or global scan. Calibre, Anki, Obsidian, a filesystem, a
-browser session, and a source platform retain their distinct facts and failure
-modes. Shared provider results expose target, scope, freshness, completeness,
-status, records, and unobserved boundaries. Adapters with native-specific
-result shapes keep their observed data and failure state explicit; no provider
-decides which fact matters or creates an explanatory relation.
-
-Repository mechanisms currently cover four broad jobs:
-
-- structural parsing, retrieval, and vault/application context;
-- read-only native observations such as Anki and loopback-only Calibre;
-- exact source recovery and guarded source-to-note formation; and
-- identity-checked rename, staging, cleanup, and transaction validation.
-
-`Bootstrap.md` names the question each mechanism can answer. Every command owns
-its detailed interface in `--help`, and its code and tests own the exact data
-contract. The README deliberately does not duplicate either surface.
+There is no hidden daemon. Editing vault instructions changes the next run;
+changing copied repository tools requires reinstalling the affected target.
 
 ## Install and verify
 
@@ -140,13 +79,7 @@ relevant command's `--help`. Calibre/document reading and native annotation
 ownership are explained in `<vault>/memory/projects/Reading Integration.md`;
 the code, emitted scope and tests own exact coverage and locator contracts.
 
-## Development boundary
-
-Put a rule in code when it needs deterministic repeated execution or enforced
-validation. Keep it in vault Markdown when it is editable theory, a semantic
-criterion, current project knowledge, or run evidence. Do not maintain the same
-current rule in both places: code should load or validate Markdown-owned
-configuration instead of paraphrasing it.
+## Dependencies and tests
 
 The standard library is sufficient for structural, EPUB-provider, source, and
 transaction tools. Native PDF annotation recovery additionally uses the
@@ -190,16 +123,3 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 
 For current behaviour, begin with the configured vault's `Bootstrap.md`, not
 with repository prose.
-
-`run_check.py` also accepts an explicit Markdown `--contract` and `--section`.
-The same field-presence mechanism can inspect a handoff or return packet;
-editable role instructions own its meaning. A new role does not require a new
-checker. Source observations, document extraction, guarded writes and generated
-packaging likewise share their existing mechanisms while native adapters keep
-their distinct identities and failure boundaries.
-
-Native Anki read responses must carry the expected envelope and one exact
-record per requested note identity. Null, truncated or mismatched observations
-are errors, not empty collections or absent notes. Structural Markdown readers
-refuse invalid UTF-8 instead of replacing bytes inside an apparent explanation;
-a failed root-note scan cannot overwrite a previously derived index.

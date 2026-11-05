@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from adapters import (ADAPTERS, SHARED_FILES, VAULT_ENV,
                       adapter_directories, add_adapter_directory_arguments,
-                      add_vault_argument, generated_files, parse_target)
+                      add_vault_argument, parse_target)
 from contract_copy import validate_contract_copies
 
 
@@ -45,27 +45,13 @@ class AdapterDeclarationTests(unittest.TestCase):
             self.assertEqual(parser.parse_args(["--vault", "explicit-vault"]).vault,
                              "explicit-vault")
 
-    def test_install_surface_contains_contract_declaration_and_fixture(self):
-        self.assertIn("contract_copies.json", SHARED_FILES)
-        self.assertIn("fixtures/problem_note_conformance.json", SHARED_FILES)
-        self.assertIn("contract_copies.json", generated_files("Codex"))
-
-    def test_spotify_ledger_is_shared_toolkit(self):
-        self.assertIn("spotify_ledger.py", SHARED_FILES)
-        self.assertIn("spotify_ledger.py", generated_files("Codex"))
-
-    def test_document_retrieval_is_installed_with_both_native_and_local_routes(self):
-        for relative in ("calibre_query.py", "document_query.py", "document_text.py", "pdf_ocr.py", "windows_ocr.ps1", "legacy_doc.py", "windows_doc.ps1"):
-            self.assertIn(relative, generated_files("Codex"))
-            self.assertIn(relative, generated_files("ClaudeCode"))
-
     def test_missing_contract_declaration_is_a_validation_failure(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             problems = validate_contract_copies(tmp)
         self.assertEqual(len(problems), 1)
         self.assertIn("declaration missing", problems[0])
 
-    def test_custom_install_copies_nested_contract_assets(self):
+    def test_custom_install_copies_every_declared_shared_file(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             root = Path(tmp)
             destination = root / "installed"
@@ -78,10 +64,11 @@ class AdapterDeclarationTests(unittest.TestCase):
             ], capture_output=True, text=True)
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            for relative in (
-                    "contract_copies.json",
-                    "fixtures/problem_note_conformance.json",
-                    "role_harness.py", "context_query.py"):
+            for required in ("windows_ocr.ps1", "windows_doc.ps1",
+                             "contract_copies.json",
+                             "fixtures/problem_note_conformance.json"):
+                self.assertTrue((destination / required).is_file(), required)
+            for relative in SHARED_FILES:
                 self.assertTrue((destination / relative).is_file(), relative)
                 source = Path(__file__).resolve().parent / relative
                 self.assertEqual((destination / relative).read_bytes(), source.read_bytes())
