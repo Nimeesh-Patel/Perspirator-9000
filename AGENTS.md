@@ -7,8 +7,8 @@ behaviour is defined by the configured vault runtime at
 
 Keep executable mechanisms, adapters, invariants, and structural validation in
 repository code. Keep criticisable theory, semantic instructions, criteria,
-configuration, and run reports in vault Markdown so they can change on the next
-run. This is a feedback-speed boundary, not a claim that code is theory-free.
+configuration, and working accounts in vault Markdown so they can change on
+the next run. Code still embodies theory in its mechanisms.
 Do not duplicate a current semantic rule in code and Markdown: code should load
 and validate the Markdown-owned rule.
 

@@ -1,4 +1,4 @@
-"""Contract tests for the advisory, Markdown-owned run-report checker."""
+"""Contract tests for the advisory, Markdown-owned field checker."""
 
 import contextlib
 import io
@@ -16,12 +16,11 @@ class RunCheckTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(dir=Path.cwd())
         self.addCleanup(temporary.cleanup)
         self.vault = Path(temporary.name)
-        self.readme = self.vault / "memory/perspirator/runs/README.md"
-        self.readme.parent.mkdir(parents=True)
+        self.contract = self.vault / "fields.md"
 
     def write_fields(self, *fields):
-        self.readme.write_text(
-            "# Run reports\n\n## Required contents\n\n"
+        self.contract.write_text(
+            "# Record fields\n\n## Required contents\n\n"
             + "\n".join(f"- **{field}:** explanation" for field in fields)
             + "\n\n## Other section\n\n- **Not a required field:** ignored\n",
             encoding="utf-8",
@@ -29,14 +28,15 @@ class RunCheckTests(unittest.TestCase):
 
     def run_main(self, *reports, json_output=True):
         output, errors = io.StringIO(), io.StringIO()
-        argv = ["--vault", str(self.vault), *map(str, reports)]
+        argv = ["--vault", str(self.vault), "--contract", str(self.contract),
+                *map(str, reports)]
         if json_output:
             argv.append("--json")
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             result = run_check.main(argv)
         return result, output.getvalue(), errors.getvalue()
 
-    def test_editing_readme_changes_field_names_without_code_changes(self):
+    def test_editing_contract_changes_field_names_without_code_changes(self):
         report = self.vault / "chosen.md"
         report.write_text("## New field\nAn explanation.\n", encoding="utf-8")
         self.write_fields("Original field")
@@ -49,7 +49,8 @@ class RunCheckTests(unittest.TestCase):
         payload = json.loads(output)
         self.assertEqual(result, 0)
         self.assertEqual(errors, "")
-        self.assertEqual(payload["readme"], str(self.readme.resolve()))
+        self.assertEqual(payload["readme"], str(self.contract.resolve()))
+        self.assertEqual(payload["contract"], str(self.contract.resolve()))
         self.assertEqual(payload["fields"], ["New field"])
         self.assertEqual(payload["reports"][0]["fields"], {"New field": "present"})
 
@@ -113,31 +114,31 @@ class RunCheckTests(unittest.TestCase):
         report.write_text("## Task\n", encoding="utf-8")
         for text in ("# No section\n", "## Required contents\n\n## Later\n",
                      "## Required contents\n\nPlain prose only.\n"):
-            with self.subTest(readme=text):
-                self.readme.write_text(text, encoding="utf-8")
+            with self.subTest(contract=text):
+                self.contract.write_text(text, encoding="utf-8")
                 result, output, errors = self.run_main(report)
                 self.assertEqual(result, 2)
                 self.assertEqual(output, "")
                 self.assertIn("error:", errors)
                 self.assertIn("Required contents", errors)
 
-    def test_missing_or_non_utf8_readme_exits_two_with_message(self):
+    def test_missing_or_non_utf8_contract_exits_two_with_message(self):
         report = self.vault / "chosen.md"
         report.write_text("## Task\n", encoding="utf-8")
         result, output, errors = self.run_main(report)
         self.assertEqual(result, 2)
-        self.assertIn("cannot read run-report README", errors)
-        self.readme.write_bytes(b"\xff")
+        self.assertIn("cannot read field contract", errors)
+        self.contract.write_bytes(b"\xff")
         result, output, errors = self.run_main(report)
         self.assertEqual(result, 2)
-        self.assertIn("cannot read run-report README", errors)
+        self.assertIn("cannot read field contract", errors)
 
-    def test_only_explicit_reports_and_required_readme_are_read(self):
+    def test_only_explicit_records_and_contract_are_read(self):
         self.write_fields("Task")
         first, second = self.vault / "one.md", self.vault / "two.md"
         first.write_text("## Task\n", encoding="utf-8")
         second.write_text("An omitted field.\n", encoding="utf-8")
-        (self.readme.parent / "other-bot-record.md").write_bytes(b"\xff")
+        (self.vault / "other-bot-record.md").write_bytes(b"\xff")
         observed = []
         original = Path.read_text
 
@@ -148,7 +149,7 @@ class RunCheckTests(unittest.TestCase):
         with patch.object(Path, "read_text", track_read):
             result, output, errors = self.run_main(first, second)
         self.assertEqual(result, 0)
-        self.assertEqual(observed, [self.readme.resolve(), first.resolve(), second.resolve()])
+        self.assertEqual(observed, [self.contract.resolve(), first.resolve(), second.resolve()])
         self.assertEqual(len(json.loads(output)["reports"]), 2)
 
     def test_explicit_contract_and_section_share_the_existing_checker(self):
@@ -160,7 +161,6 @@ class RunCheckTests(unittest.TestCase):
             "- **Remaining criticism:** unresolved content\n", encoding="utf-8")
         record = self.vault / "reply.md"
         record.write_text("## Reviewed revision\nExact hash.\n", encoding="utf-8")
-        # No default README exists: an explicit contract must not depend on it.
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             result = run_check.main([
@@ -177,8 +177,7 @@ class RunCheckTests(unittest.TestCase):
         self.assertEqual(run_check.required_fields(
             self.vault, contract, "## Handoff returns")[1], ["Changed field"])
 
-    def test_unusable_explicit_contract_never_falls_back_to_default(self):
-        self.write_fields("Default field")
+    def test_unusable_explicit_contract_is_rejected(self):
         contract = self.vault / "invalid.md"
         for content in (b"\xff", b"## Other\n- **Wrong:** field\n"):
             contract.write_bytes(content)
@@ -186,6 +185,13 @@ class RunCheckTests(unittest.TestCase):
                 run_check.required_fields(self.vault, contract, "## Handoff inputs")
         with self.assertRaisesRegex(ValueError, "must be a ## heading"):
             run_check.required_fields(self.vault, contract, "### Handoff inputs")
+
+    def test_no_contract_is_a_usage_error(self):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as usage_error:
+            run_check.main(["--vault", str(self.vault), "record.md"])
+        self.assertEqual(usage_error.exception.code, 2)
+        self.assertIn("--contract", errors.getvalue())
 
     def test_contract_examples_cannot_add_fields_or_end_the_real_section(self):
         contract = self.vault / "exchange.md"

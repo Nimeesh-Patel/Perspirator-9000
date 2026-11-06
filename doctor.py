@@ -3,7 +3,6 @@
 
 import argparse
 import sys
-import tempfile
 from pathlib import Path
 
 from adapters import (ADAPTERS, FIRST_CLASS, SHARED_FILES, TARGETS,
@@ -73,9 +72,6 @@ def validate_vault(vault):
     except ValueError as exc:
         check("active policy surface is well formed", False, str(exc))
 
-    for name in ("proposals", "runs"):
-        check(f"runtime directory exists: {name}", (base / name).is_dir())
-
     try:
         lifecycle = load_lifecycle(vault)
         problems = lifecycle_problems(vault, lifecycle)
@@ -85,19 +81,6 @@ def validate_vault(vault):
               not problems, "; ".join(problems[:4]))
     except ValueError as exc:
         check("artifact lifecycle declaration is well formed", False, str(exc))
-
-    runs = base / "runs"
-    writable = False
-    error = "runs directory missing"
-    if runs.is_dir():
-        try:
-            with tempfile.NamedTemporaryFile(
-                    dir=runs, prefix=".doctor-", suffix=".tmp", delete=True):
-                writable = True
-            error = ""
-        except OSError as exc:
-            error = str(exc)
-    check("runs directory is writable", writable, error)
 
 
 NOT_SHIPPED = {"install.py"}

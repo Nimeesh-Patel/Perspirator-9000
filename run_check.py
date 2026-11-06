@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Report advisory field-presence facts for explicitly supplied Markdown records.
 
-The default field contract is memory/perspirator/runs/README.md. Another
-explicit Markdown contract and section can supply fields for a handoff or
-return packet. This tool checks headings and bold labels only; it does not
-judge content, authority, retention, review quality or the truth of a result.
+Supply the Markdown contract and section that govern the record. This tool
+can check a handoff, return packet or another explicit record for the presence
+of headings and bold labels.
 """
 
 import argparse
@@ -42,28 +41,27 @@ def unfenced_lines(text):
             yield line
 
 
-def required_fields(vault, contract=None, section_heading="## Required contents"):
+def required_fields(vault, contract, section_heading="## Required contents"):
     """Load the Markdown-owned field names, or explain an unusable surface."""
     root = Path(vault).expanduser().resolve()
-    readme = Path(contract).expanduser() if contract else Path("memory/perspirator/runs/README.md")
-    if not readme.is_absolute():
-        readme = root / readme
-    readme = readme.resolve()
-    label = "field contract" if contract else "run-report README"
+    contract_path = Path(contract).expanduser()
+    if not contract_path.is_absolute():
+        contract_path = root / contract_path
+    contract_path = contract_path.resolve()
     if not section_heading.startswith("## ") or not section_heading[3:].strip():
         raise ValueError("field contract section must be a ## heading")
     try:
-        text = readme.read_text(encoding="utf-8-sig")
+        text = contract_path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError) as exc:
-        raise ValueError(f"cannot read {label}: {readme}: {exc}") from exc
+        raise ValueError(f"cannot read field contract: {contract_path}: {exc}") from exc
     body = section("\n".join(unfenced_lines(text)), section_heading)
     if not body:
-        raise ValueError(f"missing or empty {section_heading} section: {readme}")
+        raise ValueError(f"missing or empty {section_heading} section: {contract_path}")
     fields = list(dict.fromkeys(match.group(1).strip() for match in FIELD.finditer(body)
                                 if match.group(1).strip()))
     if not fields:
-        raise ValueError(f"no field names in {section_heading}: {readme}")
-    return readme, fields
+        raise ValueError(f"no field names in {section_heading}: {contract_path}")
+    return contract_path, fields
 
 
 def normalized_label(label):
@@ -109,10 +107,10 @@ def inspect_report(path, fields):
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_vault_argument(parser)
-    parser.add_argument("reports", metavar="run.md", nargs="+",
-                        help="explicit report files to inspect; no folder scan")
-    parser.add_argument("--contract", metavar="note.md",
-                        help="explicit field contract; relative paths are vault-relative")
+    parser.add_argument("reports", metavar="record.md", nargs="+",
+                        help="explicit record files to inspect; no folder scan")
+    parser.add_argument("--contract", metavar="note.md", required=True,
+                        help="field contract; relative paths are vault-relative")
     parser.add_argument("--section", default="## Required contents",
                         help="## heading containing the contract's - **Field:** list")
     parser.add_argument("--json", action="store_true",
@@ -123,18 +121,18 @@ def arguments(argv=None):
 def main(argv=None):
     args = arguments(argv)
     try:
-        readme, fields = required_fields(args.vault, args.contract, args.section)
+        contract_path, fields = required_fields(args.vault, args.contract, args.section)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     reports = [inspect_report(path, fields) for path in args.reports]
     # Keep readme for existing consumers; contract also describes non-run uses.
-    payload = {"readme": str(readme), "contract": str(readme),
+    payload = {"readme": str(contract_path), "contract": str(contract_path),
                "section": args.section, "fields": fields, "reports": reports}
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(f"contract: {readme} ({args.section})")
+        print(f"contract: {contract_path} ({args.section})")
         for report in reports:
             print(f"\n{report['path']}: {report['status']}")
             for field, state in report["fields"].items():

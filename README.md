@@ -9,7 +9,7 @@ those criteria.
 
 This repository is not the institution's current theory. It packages its
 repeatable mechanisms and thin host adapters. The vault supplies the live
-runtime, policies, project explanations, and run reports.
+runtime, policies, and working explanations.
 
 ## One owner for each role
 
@@ -25,15 +25,15 @@ runtime, policies, project explanations, and run reports.
 | Working problem records, handoffs and delivery | `<vault>/memory/policies/Error Correction.md` |
 | Editable semantic and write policies | `<vault>/memory/policies/*.md` |
 | Executable mechanisms and enforced invariants | this repository |
-| Retained execution evidence | `<vault>/memory/perspirator/runs/README.md` |
+| Evidence retention and exact bot records | `<vault>/memory/policies/Note Deletion.md` and `Bot grants.md` |
 
 Installed adapters and copied scripts are generated artifacts. They do not own
 policy. Run `doctor.py` from the repository, or supply its canonical `SKILL.md`
 with `--source`, to check drift against that independent source. An installed
 doctor without a canonical source checks local structure and ownership and
 reports source comparison as unavailable. These checks do not judge an
-argument or whether a draft answered the task. Run reports are evidence about
-past work, never a second current runtime.
+argument or whether a draft answered the task. Retained execution evidence
+supports claims about past work.
 
 ## Runtime and tools
 
@@ -76,8 +76,8 @@ likewise be established through their own providers.
 
 For supported operations, dependencies and observation limits, start with the
 relevant command's `--help`. Calibre/document reading and native annotation
-ownership are explained in `<vault>/memory/projects/Reading Integration.md`;
-the code, emitted scope and tests own exact coverage and locator contracts.
+ownership are explained in the vault's `Reading Integration` note. The code,
+emitted scope and tests own exact coverage and locator contracts.
 
 ## Dependencies and tests
 
@@ -111,7 +111,7 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 - [SKILL.md](SKILL.md) — minimal host-neutral locator template;
 - [install.py](install.py) and [adapters.py](adapters.py) — generated host packaging;
 - [doctor.py](doctor.py) — runtime, contract, lifecycle, and installed-copy validation;
-- [run_check.py](run_check.py) — advisory report headings loaded from the vault README;
+- [run_check.py](run_check.py) — advisory field presence using an explicit Markdown contract;
 - [role_harness.py](role_harness.py) — small role discovery surface, bounded exact
   handoff snapshots and response identity/freshness checks;
 - [context_query.py](context_query.py) — task-derived, identity-labelled vault
