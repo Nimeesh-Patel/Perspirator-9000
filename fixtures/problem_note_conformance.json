@@ -5,7 +5,7 @@
     "optional opening YAML frontmatter is excluded from the problem side",
     "the first line whose trimmed content is *** outside a triple-backtick fence is the boundary",
     "a separator may exist while either side is empty",
-    "a note is reviewable only when both sides are non-empty"
+    "a note is reviewable whenever it has a separator; either side may be empty"
   ],
   "cases": [
     {
@@ -38,7 +38,7 @@
       "has_separator": true,
       "problem": "",
       "conjecture": "An answer.",
-      "reviewable": false
+      "reviewable": true
     },
     {
       "name": "empty conjecture",
@@ -46,7 +46,15 @@
       "has_separator": true,
       "problem": "A problem.",
       "conjecture": "",
-      "reviewable": false
+      "reviewable": true
+    },
+    {
+      "name": "blank template",
+      "text": "---\nup: null\ncategory: English\n---\n\n***",
+      "has_separator": true,
+      "problem": "",
+      "conjecture": "",
+      "reviewable": true
     },
     {
       "name": "fenced marker is prose",

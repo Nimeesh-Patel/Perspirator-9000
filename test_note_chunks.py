@@ -89,7 +89,7 @@ class ContractSuite(unittest.TestCase):
                     value["has_separator"] == case["has_separator"]
                     and value["problem"] == case["problem"]
                     and value["conjecture"] == case["conjecture"]
-                    and bool(value["problem"] and value["conjecture"])
+                    and value["has_separator"]
                     == case["reviewable"])
             self.assertTrue(all(conforming), ("Python parser conforms to shared Problem Note fixtures", str([fixture["cases"][i]["name"]
                                         for i, ok in enumerate(conforming) if not ok])))
