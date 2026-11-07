@@ -111,6 +111,19 @@ class AnkiSnapshotTests(unittest.TestCase):
         self.assertEqual(result["freshness"]["capture_age_seconds"], 3599)
         self.assertNotIn("text", source)
 
+    def test_current_interest_header_binds_like_the_legacy_one(self):
+        # The header Interest renders since 2026-11-08: a classed div holding
+        # one link with an inline SVG icon and the title in a span.
+        front = ('<div class="interest-source" style="display:flex;justify-content:flex-end;">'
+                 f'<a href="{self.uri}" style="display:inline-flex;">'
+                 '<svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 20h9"/></svg>'
+                 '<span>A problem.v2</span></a></div><p>Question</p>')
+        data = json.loads(json.dumps(self.capture))
+        data["records"][0]["cards"][0]["source_front_html"] = front
+        source = self.read(data)["records"][0]["cards"][0]["vault_source"]
+        self.assertEqual(source["status"], "matched")
+        self.assertEqual(source["locator"], self.uri)
+
     def test_multiple_cards_and_nonatomic_overlapping_queries_are_retained(self):
         second = {**self.card, "card_id": 22, "ordinal": 1}
         self.capture["records"][0]["cards"].append(second)

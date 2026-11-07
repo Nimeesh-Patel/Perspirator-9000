@@ -51,8 +51,11 @@ READ_ONLY = {
 }
 
 TAG_RE = re.compile(r"<[^>]+>")
+# Interest's leading source header: the current form, marked by its class,
+# and the form cards carried before 2026-11-08 until every card is re-synced.
 SOURCE_HEADER = re.compile(
-    r'\A<div style="text-align:right;font-size:0.75em;margin-bottom:6px;opacity:0.6;">'
+    r'\A(?:<div class="interest-source"[^>]*>'
+    r'|<div style="text-align:right;font-size:0.75em;margin-bottom:6px;opacity:0.6;">)'
     r'(.*?)</div>', re.DOTALL)
 STATE_COLUMNS = ("deck_id", "original_deck_id", "type", "queue", "due",
                  "original_due", "interval", "reps", "lapses")
