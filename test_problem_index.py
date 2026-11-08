@@ -67,6 +67,10 @@ class RootProblemIndexTests(unittest.TestCase):
             "collection.md": ("---\ncollection: People\n---\n***\n", None, "People", None),
             "empty-collection.md": ("---\ncollection:\ncategory: Morality\n---\nQ\n***\n", "Morality", "", None),
             "two-decks.md": ("---\ncategory:\n- A\n- B\n---\nQ\n***\n", None, None, None),
+            # Mixed line endings once hid a category line and a second one was
+            # added; Interest's YAML parser refuses the repeated key.
+            "repeated-key.md": ("---\r\nup:\n  - x\ncategory: Default\r\n"
+                                "category: Morality\r\n---\r\nQ\n***\n", "Default", None, None),
         }
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             vault = Path(tmp)
@@ -77,6 +81,8 @@ class RootProblemIndexTests(unittest.TestCase):
                 self.assertEqual((record["category"], record["collection"], record["deck"]),
                                  (category, collection, deck), name)
             self.assertTrue(index_note(vault / "two-decks.md", vault)["category_error"])
+            self.assertIn("repeats the key category",
+                          index_note(vault / "repeated-key.md", vault)["category_error"])
 
     def test_structural_clis_expose_help(self):
         root = Path(__file__).resolve().parent

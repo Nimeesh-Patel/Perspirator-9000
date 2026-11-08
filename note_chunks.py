@@ -88,6 +88,7 @@ def projection_fields(fm):
     if not fm:
         return fields
     lines = fm.split("\n")
+    seen = set()
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -96,6 +97,13 @@ def projection_fields(fm):
             continue
         key, _, value = line.partition(":")
         key = key.strip()
+        if key and not key.startswith("#") and _:
+            # Interest's YAML parser rejects a repeated key, and with it the
+            # whole discovery, so the note has no deck at all.
+            if key in seen:
+                fields["category_error"] = (
+                    f"frontmatter repeats the key {key}: Interest rejects the note")
+            seen.add(key)
         if key in ("category", "collection"):
             items, j = [], i + 1
             while j < len(lines) and (lines[j].startswith("-") or lines[j][:1].isspace()):
@@ -110,7 +118,7 @@ def projection_fields(fm):
             names = list(dict.fromkeys(name for name in ([inline] if inline else []) + items if name))
             if key == "collection":
                 fields["collection"] = names[0] if names else ""
-            elif len(names) == 1:
+            elif len(names) == 1 and fields["category"] is None:
                 fields["category"] = names[0]
             elif len(names) > 1:
                 fields["category_error"] = "category must name one deck"
