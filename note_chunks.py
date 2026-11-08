@@ -67,9 +67,62 @@ def extract_links(text):
     return list(seen)
 
 
+def _scalar(value):
+    """A YAML plain or quoted scalar's text, without a YAML dependency."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1].strip()
+    return value
+
+
+def projection_fields(fm):
+    """The frontmatter keys that decide a note's Anki projection.
+
+    Mirrors Interest's scanner, which owns the rule: any ``collection:`` key
+    (even empty) withdraws the note from Anki; ``category:`` names one deck as
+    a string or a one-item list, and absence means Default. Returns
+    ``{"category", "category_error", "collection"}`` where ``collection`` is
+    None when the key is absent and a string (possibly empty) when present.
+    """
+    fields = {"category": None, "category_error": None, "collection": None}
+    if not fm:
+        return fields
+    lines = fm.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line[:1].isspace():
+            i += 1
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        if key in ("category", "collection"):
+            items, j = [], i + 1
+            while j < len(lines) and (lines[j].startswith("-") or lines[j][:1].isspace()):
+                item = lines[j].strip()
+                if item.startswith("- ") or item == "-":
+                    items.append(_scalar(item[1:]))
+                j += 1
+            inline = _scalar(value)
+            if inline.startswith("[") and inline.endswith("]"):
+                items = [_scalar(part) for part in inline[1:-1].split(",")]
+                inline = ""
+            names = list(dict.fromkeys(name for name in ([inline] if inline else []) + items if name))
+            if key == "collection":
+                fields["collection"] = names[0] if names else ""
+            elif len(names) == 1:
+                fields["category"] = names[0]
+            elif len(names) > 1:
+                fields["category_error"] = "category must name one deck"
+            i = j
+            continue
+        i += 1
+    return fields
+
+
 def parse_frontmatter(fm):
-    """category/collection and up: parents, without a YAML dependency."""
-    category, up = None, []
+    """category (the deck name) and up: parents, without a YAML dependency."""
+    category, up = projection_fields(fm)["category"], []
     if not fm:
         return category, up
     lines = fm.split("\n")
@@ -79,11 +132,7 @@ def parse_frontmatter(fm):
     i = 0
     while i < len(lines):
         stripped = lines[i].strip()
-        if stripped.startswith("category:"):
-            category = stripped[len("category:"):].strip() or category
-        elif stripped.startswith("collection:") and category is None:
-            category = stripped[len("collection:"):].strip() or None
-        elif stripped.startswith("up:"):
+        if stripped.startswith("up:"):
             up.extend(extract_links(stripped[len("up:"):].strip()))
             j = i + 1
             while j < len(lines) and (lines[j].strip() == "" or lines[j][:1].isspace()):

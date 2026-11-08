@@ -25,7 +25,11 @@ Output (JSON array), one object per problem note:
       "name":     "<filename without .md>",
       "path":     "<path relative to vault root, forward slashes>",
       "problem":  "<problem side, above the first ***; may be empty>",
-      "category": "<category: or collection: from frontmatter, or null>",
+      "category": "<category: deck name (string or one-item list), or null>",
+      "collection": "<collection: value; \"\" if the key is empty; null if absent>",
+      "deck": "<deck Interest projects to: category or Default; null when
+                collection: withdraws the note or category names >1 deck>",
+      "category_error": "<why category: is unusable, or null>",
       "up":       ["<parent note name>", ...],   # [[..]] under up:
       "links":    ["<outbound link target>", ...], # unique, whole body
       "stub":     true|false   # true if the conjecture side is empty
@@ -44,7 +48,7 @@ from pathlib import Path
 # contract itself stays owned by problem_half.parse_note().
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from problem_half import parse_note  # noqa: E402
-from note_chunks import extract_links, parse_frontmatter  # noqa: E402
+from note_chunks import extract_links, parse_frontmatter, projection_fields  # noqa: E402
 
 
 def index_note(path: Path, vault_root: Path):
@@ -56,6 +60,13 @@ def index_note(path: Path, vault_root: Path):
         return None  # not a problem note
 
     category, up = parse_frontmatter(frontmatter or "")
+    projection = projection_fields(frontmatter or "")
+    if projection["collection"] is not None:
+        deck = None
+    elif projection["category_error"]:
+        deck = None
+    else:
+        deck = category or "Default"
 
     rel = path.relative_to(vault_root).as_posix()
     return {
@@ -63,6 +74,9 @@ def index_note(path: Path, vault_root: Path):
         "path": rel,
         "problem": (problem_side or "").strip(),
         "category": category,
+        "collection": projection["collection"],
+        "deck": deck,
+        "category_error": projection["category_error"],
         "up": up,
         "links": extract_links(text),
         "stub": parsed["conjecture"] == "",

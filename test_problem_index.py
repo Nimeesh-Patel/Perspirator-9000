@@ -56,6 +56,28 @@ class RootProblemIndexTests(unittest.TestCase):
                 path.write_text(text, encoding="utf-8")
                 self.assertEqual(index_note(path, vault)["stub"], expected_stub, name)
 
+    def test_deck_follows_interests_projection_rule(self):
+        # Interest's scanner owns the rule; the index must report the same deck.
+        cases = {
+            "plain.md": ("---\ncategory: Morality\n---\nQ\n***\nA\n", "Morality", None, "Morality"),
+            "quoted.md": ('---\ncategory: "Default"\n---\nQ\n***\nA\n', "Default", None, "Default"),
+            "list.md": ("---\nup:\ncategory:\n  - Institutions\n---\nQ\n***\nA\n", "Institutions", None, "Institutions"),
+            "flow.md": ("---\ncategory: [English]\n---\nQ\n***\nA\n", "English", None, "English"),
+            "absent.md": ("---\nup: null\n---\nQ\n***\nA\n", None, None, "Default"),
+            "collection.md": ("---\ncollection: People\n---\n***\n", None, "People", None),
+            "empty-collection.md": ("---\ncollection:\ncategory: Morality\n---\nQ\n***\n", "Morality", "", None),
+            "two-decks.md": ("---\ncategory:\n- A\n- B\n---\nQ\n***\n", None, None, None),
+        }
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            for name, (text, category, collection, deck) in cases.items():
+                path = vault / name
+                path.write_text(text, encoding="utf-8")
+                record = index_note(path, vault)
+                self.assertEqual((record["category"], record["collection"], record["deck"]),
+                                 (category, collection, deck), name)
+            self.assertTrue(index_note(vault / "two-decks.md", vault)["category_error"])
+
     def test_structural_clis_expose_help(self):
         root = Path(__file__).resolve().parent
         for script in ("problem_index.py", "problem_half.py"):
