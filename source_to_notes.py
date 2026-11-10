@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Stage source-grounded Problem Notes from an agent-authored grouping plan.
+"""Stage exact source attachments to existing Problem Notes.
 
 Source adapters recover facts; an agent supplies explanatory judgments in a
 plan; this tool checks the mechanical boundary between them. It guarantees
-coverage, prevents a source from being assigned twice, validates parent links,
-renders ordinary `***` Problem Notes, and permits an explicit, guarded append
-when an agent has judged that a source addresses an existing note's same
-problem. Existing bytes are preserved; only exact source text and locator are
-appended.
+coverage, prevents a source from being assigned twice, and permits an explicit,
+guarded append when a source addresses an existing note's same problem.
+Existing bytes are preserved; only exact source text and locator are appended.
+Plans that create new notes are refused.
 
 The source bundle may be a JSON list or an object whose `sources` or `records`
 field is a list. Every source needs stable `id`, exact `text`, and a `locator` URI saying
@@ -17,17 +16,11 @@ highlight. Records also state provenance, completeness, and withdrawal state.
 Plan shape:
     {
       "notes": [{
-        "title": "How can ...?",
-        "problem": "How can ...?",
-        "up": ["existing parent"],
-        "category": "Default",
-        "source_ids": ["source-1", "source-2"]
-      }, {
         "file": "an existing problem.md",
         "existing": true,
         "problem": "The exact current problem side.",
         "same_problem": "Why these sources address this same problem.",
-        "source_ids": ["source-3"]
+        "source_ids": ["source-1", "source-2"]
       }]
     }
 
@@ -36,8 +29,7 @@ threshold. The exact problem field is also a stale-write guard: staging or
 writing stops if the target's current problem side differs.
 
 Examples:
-    python source_to_notes.py sources.json plan.json --stage scratch/notes
-    python source_to_notes.py sources.json plan.json --vault "/vault" --write
+    python source_to_notes.py sources.json plan.json --vault "/vault" --stage scratch/notes
     python source_to_notes.py sources.json plan.json --vault "/vault" --write --append-existing
 """
 
@@ -47,7 +39,7 @@ import re
 import sys
 from pathlib import Path
 
-from note_chunks import MEMORY_FOLDER, NON_NOTE_FOLDERS, read_note
+from note_chunks import read_note
 from problem_half import parse_note
 from change_transaction import (apply_writes, file_state, sha256_bytes,
                                 write_operation)
@@ -55,12 +47,9 @@ from contracts import validate_provider_result, validate_source_record
 
 
 INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-# Excludes `memory` because this writes root vault Problem Notes and `memory/`
-# belongs to Basic Memory. `Attachments` was missing here while every other
-# tool excluded it — an unexplained difference, so a defect rather than a
-# scoping choice.
-EXCLUDED_PARTS = {*NON_NOTE_FOLDERS, MEMORY_FOLDER}
 SEPARATOR = re.compile(r"^\*\*\*\s*$", re.MULTILINE)
+
+
 def read_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -114,19 +103,6 @@ def filename_for(note):
     return filename
 
 
-def existing_stems(vault):
-    stems = set()
-    for path in vault.rglob("*.md"):
-        try:
-            relative = path.relative_to(vault)
-        except ValueError:
-            continue
-        if any(part.lower() in EXCLUDED_PARTS for part in relative.parts[:-1]):
-            continue
-        stems.add(path.stem.casefold())
-    return stems
-
-
 def read_existing(path):
     try:
         raw = path.read_bytes()
@@ -163,7 +139,6 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
     filenames = set()
     assigned = {}
     normalized = []
-    known_parents = existing_stems(vault) if vault else None
     source_locations = existing_source_locations(vault, sources) if vault else {}
 
     for index, note in enumerate(notes):
@@ -175,9 +150,10 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
             raise ValueError(f"duplicate planned filename: {filename}")
         filenames.add(filename_key)
 
-        existing = note.get("existing", False)
-        if not isinstance(existing, bool):
-            raise ValueError(f"{filename}: existing must be true or false")
+        if note.get("existing") is not True:
+            raise ValueError(
+                f"{filename}: creating new notes is retired; "
+                "source attachments require existing:true")
 
         problem = note.get("problem")
         if not isinstance(problem, str) or not problem.strip():
@@ -186,48 +162,24 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
             raise ValueError(f"{filename}: problem contains the note separator")
         problem = problem.strip()
 
-        expected_sha256 = None
-        same_problem = None
-        if existing:
-            if vault is None:
-                raise ValueError(f"{filename}: existing target validation requires --vault")
-            if "up" in note or "category" in note:
-                raise ValueError(
-                    f"{filename}: existing append cannot change up or category")
-            same_problem = note.get("same_problem")
-            if not isinstance(same_problem, str) or not same_problem.strip():
-                raise ValueError(
-                    f"{filename}: existing append requires a same_problem explanation")
-            same_problem = same_problem.strip()
-            target = vault / filename
-            if not target.is_file():
-                raise ValueError(f"{filename}: existing target does not exist")
-            raw, _, current_problem = read_existing(target)
-            if current_problem != problem:
-                raise ValueError(
-                    f"{filename}: planned problem does not exactly match current problem side")
-            expected_sha256 = sha256_bytes(raw)
-            category = None
-            parents = []
-        else:
-            category = note.get("category", "Default")
-            if not isinstance(category, str) or not category.strip():
-                raise ValueError(f"{filename}: category must be non-empty text")
-            category = category.strip()
-
-            parents = note.get("up", [])
-            if parents is None:
-                parents = []
-            if not isinstance(parents, list) or not all(
-                    isinstance(parent, str) and parent.strip() for parent in parents):
-                raise ValueError(f"{filename}: up must be a list of note names")
-            parents = [parent.strip() for parent in parents]
-            if known_parents is not None:
-                missing = [parent for parent in parents
-                           if parent.casefold() not in known_parents]
-                if missing:
-                    raise ValueError(
-                        f"{filename}: unresolved up link(s): {', '.join(missing)}")
+        if vault is None:
+            raise ValueError(f"{filename}: existing target validation requires --vault")
+        if "up" in note or "category" in note:
+            raise ValueError(
+                f"{filename}: existing append cannot change up or category")
+        same_problem = note.get("same_problem")
+        if not isinstance(same_problem, str) or not same_problem.strip():
+            raise ValueError(
+                f"{filename}: existing append requires a same_problem explanation")
+        same_problem = same_problem.strip()
+        target = vault / filename
+        if not target.is_file():
+            raise ValueError(f"{filename}: existing target does not exist")
+        raw, _, current_problem = read_existing(target)
+        if current_problem != problem:
+            raise ValueError(
+                f"{filename}: planned problem does not exactly match current problem side")
+        expected_sha256 = sha256_bytes(raw)
 
         source_ids = note.get("source_ids")
         if not isinstance(source_ids, list) or not source_ids:
@@ -248,10 +200,8 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
 
         normalized.append({
             "filename": filename,
-            "existing": existing,
+            "existing": True,
             "problem": problem,
-            "category": category,
-            "up": parents,
             "same_problem": same_problem,
             "expected_sha256": expected_sha256,
             "source_ids": source_ids,
@@ -263,31 +213,12 @@ def validate_plan(payload, sources, vault=None, allow_unassigned=False):
     return normalized, unassigned
 
 
-def render_frontmatter(note):
-    if note["up"]:
-        up = "up:\n" + "\n".join(
-            f"- {json.dumps(f'[[{parent}]]', ensure_ascii=False)}"
-            for parent in note["up"])
-    else:
-        up = "up: null"
-    category = json.dumps(note["category"], ensure_ascii=False)
-    return f"---\n{up}\ncategory: {category}\n---"
-
-
 def render_source_blocks(note, sources):
     blocks = []
     for source_id in note["source_ids"]:
         source = sources[source_id]
         blocks.append(f"{source['text']}\n\n{source['locator']}")
     return "\n\n---\n\n".join(blocks)
-
-
-def render_note(note, sources):
-    return (
-        f"{render_frontmatter(note)}\n\n"
-        f"{note['problem']}\n\n***\n\n"
-        f"{render_source_blocks(note, sources)}\n"
-    )
 
 
 def append_suffix(raw, note, sources):
@@ -314,39 +245,36 @@ def write_notes(notes, sources, destination, vault=None, append_existing=False):
     targets = []
     for note in notes:
         filename = note["filename"]
-        if note.get("existing"):
-            if vault is None:
-                raise ValueError(f"{filename}: staging an existing note requires vault")
-            source_path = vault / filename
-            raw, _, _ = read_existing(source_path)
-            digest = sha256_bytes(raw)
-            if digest != note.get("expected_sha256"):
+        if note.get("existing") is not True:
+            raise ValueError(f"{filename}: creating new notes is retired")
+        if vault is None:
+            raise ValueError(f"{filename}: staging an existing note requires vault")
+        source_path = vault / filename
+        raw, _, _ = read_existing(source_path)
+        digest = sha256_bytes(raw)
+        if digest != note.get("expected_sha256"):
+            raise ValueError(f"{filename}: existing target changed after validation")
+        suffix = append_suffix(raw, note, sources)
+        if live_write:
+            if not append_existing:
+                raise ValueError(
+                    "refusing existing-note append without --append-existing: "
+                    + filename)
+            target = source_path
+            before = file_state(target, include_bytes=True)
+            if before.get("bytes") != raw:
                 raise ValueError(f"{filename}: existing target changed after validation")
-            suffix = append_suffix(raw, note, sources)
-            if live_write:
-                if not append_existing:
-                    raise ValueError(
-                        "refusing existing-note append without --append-existing: "
-                        + filename)
-                target = source_path
-                before = file_state(target, include_bytes=True)
-                operations.append(write_operation(
-                    target, raw + suffix, before=before,
-                    reason="append exact sources to an approved same-problem note"))
-            else:
-                target = destination / filename
-                if target.exists():
-                    raise ValueError(f"refusing to overwrite: {target}")
-                operations.append(write_operation(
-                    target, raw + suffix,
-                    reason="stage complete patched note for criticism"))
+            operations.append(write_operation(
+                target, raw + suffix, before=before,
+                reason="append exact sources to an approved same-problem note"))
         else:
             target = destination / filename
-            if target.exists():
+            before = file_state(target)
+            if before["exists"]:
                 raise ValueError(f"refusing to overwrite: {target}")
             operations.append(write_operation(
-                target, render_note(note, sources).encode("utf-8"),
-                reason="create approved source-grounded Problem Note"))
+                target, raw + suffix, before=before,
+                reason="stage complete patched note for criticism"))
         targets.append(target)
 
     outcome = apply_writes(operations)
@@ -360,13 +288,13 @@ def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("sources", help="JSON source bundle")
-    parser.add_argument("plan", help="agent-authored JSON grouping plan")
+    parser.add_argument("plan", help="JSON attachment plan for existing notes")
     destination = parser.add_mutually_exclusive_group(required=True)
-    destination.add_argument("--stage", help="stage rendered notes here")
+    destination.add_argument("--stage", help="stage complete patched copies here")
     destination.add_argument("--write", action="store_true",
-                             help="write to the root of --vault")
+                             help="append to existing root notes in --vault")
     parser.add_argument("--vault",
-                        help="vault used to validate up links and write targets")
+                        help="vault containing the existing source targets")
     parser.add_argument("--append-existing", action="store_true",
                         help="with --write, permit explicit existing:true appends")
     parser.add_argument("--allow-unassigned", action="store_true",
@@ -397,13 +325,12 @@ def main():
     except (ValueError, RuntimeError) as exc:
         raise SystemExit(f"error: {exc}") from None
 
-    existing_count = sum(1 for note in notes if note["existing"])
     print(json.dumps({
         "sources": len(sources),
         "assigned_sources": len(sources) - len(unassigned),
         "unassigned_sources": unassigned,
-        "new_notes": len(notes) - existing_count,
-        "existing_notes": existing_count,
+        "new_notes": 0,
+        "existing_notes": len(notes),
         "destination": str(destination),
         "targets": [str(path) for path in targets],
     }, indent=2, ensure_ascii=False))

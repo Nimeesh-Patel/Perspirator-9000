@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Rank memory knowledge that may deserve a `***` problem note.
+"""Nominate recurring problems, undeveloped notes, and missing link targets.
 
 Retrieval and structure only: this script ranks, counts, and reports. Which signals run,
-their thresholds, which notes are exempt, and the shape of a draft all live in
+their thresholds, and which notes are exempt live in
 the vault at memory/perspirator/Candidate Selection.md, so the selection logic
 is editable without touching code.
 """
@@ -28,7 +28,7 @@ from neighbour import (content_words, inverse_document_frequency,  # noqa: E402
 
 
 def load_config(vault):
-    """Signals, thresholds, exemptions, and the draft template, from the vault."""
+    """Read diagnostic signals, thresholds, and exemptions from the vault."""
     path = vault.joinpath(*CONFIG_NOTE)
     text = read(path)
     if text is None:
@@ -43,11 +43,7 @@ def load_config(vault):
     exempt = {b.strip().lower() for b in bullets(section(text, "## Exempt"))}
     excluded = {b.strip().replace("\\", "/").strip("/").casefold()
                 for b in bullets(section(text, "## Excluded folders"))}
-    template = ""
-    block = re.search(r"```text\n(.*?)```", section(text, "## Draft form"), re.S)
-    if block:
-        template = block.group(1)
-    return signals, exempt, excluded, template
+    return signals, exempt, excluded
 
 
 
@@ -194,7 +190,7 @@ def main():
     if not memory.is_dir():
         raise SystemExit(f"STOP: no memory directory at {memory}")
 
-    signals, exempt, excluded, template = load_config(vault)
+    signals, exempt, excluded = load_config(vault)
     hits = []
     if "recurrence" in signals:
         thresholds = signals["recurrence"]
@@ -213,7 +209,7 @@ def main():
     if args.json:
         print(json.dumps({"signals": list(signals), "exempt": sorted(exempt),
                           "excluded_folders": sorted(excluded),
-                          "template": template, "candidates": hits[:args.limit]},
+                          "candidates": hits[:args.limit]},
                          indent=2, ensure_ascii=False))
         return 0
 

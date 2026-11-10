@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-import note_chunks as nc
 import source_to_notes as stn
 import highlights_to_notes as hln
 import readera_highlights
@@ -174,8 +173,10 @@ class SourceToNotesTests(unittest.TestCase):
     def test_plan_refuses_malformed_existing_notes_before_source_assignment(self):
         sources = stn.source_records([SOURCES[0]])
         plan = {"notes": [{
-            "title": "New note",
+            "file": "Existing.md",
+            "existing": True,
             "problem": "What does this source explain?",
+            "same_problem": "The source explains the existing question.",
             "source_ids": ["a"],
         }]}
         with tempfile.TemporaryDirectory() as directory:
@@ -191,58 +192,79 @@ class SourceToNotesTests(unittest.TestCase):
     def test_plan_requires_complete_unique_assignment(self):
         sources = stn.source_records({"records": SOURCES})
         plan = {"notes": [{
-            "title": "One",
+            "file": "One.md",
+            "existing": True,
             "problem": "What is the problem?",
+            "same_problem": "The source addresses the existing question.",
             "source_ids": ["a"],
         }]}
-        with self.assertRaisesRegex(ValueError, "unassigned source ids: b"):
-            stn.validate_plan(plan, sources)
-        plan["notes"].append({
-            "title": "Two",
-            "problem": "What conflicts?",
-            "source_ids": ["a", "b"],
-        })
-        with self.assertRaisesRegex(ValueError, "assigned to both"):
-            stn.validate_plan(plan, sources)
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            (vault / "One.md").write_text(
+                "What is the problem?\n***\nOne conjecture.\n", encoding="utf-8")
+            (vault / "Two.md").write_text(
+                "What conflicts?\n***\nAnother conjecture.\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unassigned source ids: b"):
+                stn.validate_plan(plan, sources, vault=vault)
+            notes, unassigned = stn.validate_plan(
+                plan, sources, vault=vault, allow_unassigned=True)
+            self.assertEqual(unassigned, ["b"])
+            self.assertEqual(notes[0]["source_ids"], ["a"])
+            plan["notes"].append({
+                "file": "Two.md",
+                "existing": True,
+                "problem": "What conflicts?",
+                "same_problem": "The sources contribute to this conflict.",
+                "source_ids": ["a", "b"],
+            })
+            with self.assertRaisesRegex(ValueError, "assigned to both"):
+                stn.validate_plan(plan, sources, vault=vault)
 
-    def test_rendering_preserves_problem_note_and_source_contracts(self):
+    def test_plan_refuses_new_note_creation(self):
         sources = stn.source_records(SOURCES)
         plan = {"notes": [{
             "title": "A live conflict",
             "problem": "How can both claims stand?",
-            "up": ["Known parent's criticism"],
             "source_ids": ["a", "b"],
         }]}
         with tempfile.TemporaryDirectory() as directory:
             vault = Path(directory)
-            (vault / "Known parent's criticism.md").write_text("parent", encoding="utf-8")
-            notes, unassigned = stn.validate_plan(plan, sources, vault=vault)
-            text = stn.render_note(notes[0], sources)
-        self.assertEqual(unassigned, [])
-        frontmatter = text.split('---', 2)[1].strip()
-        self.assertEqual(nc.parse_frontmatter(frontmatter)[1],
-                         ['Known parent\'s criticism'])
-        self.assertIn("up:\n- \"[[Known parent's criticism]]\"\ncategory: \"Default\"", text)
-        self.assertIn("How can both claims stand?\n\n***\n\n", text)
-        self.assertIn("First exact idea.\n\nhttps://example.com/a", text)
-        self.assertIn("A conflicting idea.\n\nhttps://example.com/b", text)
-        self.assertNotIn("date:", text)
+            with self.assertRaisesRegex(ValueError, "creating new notes is retired"):
+                stn.validate_plan(plan, sources, vault=vault)
+            plan["notes"][0]["existing"] = False
+            with self.assertRaisesRegex(ValueError, "creating new notes is retired"):
+                stn.validate_plan(plan, sources, vault=vault)
+            self.assertEqual(list(vault.iterdir()), [])
 
-    def test_writer_refuses_to_replace_an_existing_note(self):
+    def test_writer_refuses_creation_before_applying_a_mixed_batch(self):
         sources = stn.source_records([SOURCES[0]])
-        note = {
-            "filename": "Existing.md",
-            "problem": "What exists?",
-            "category": "Default",
-            "up": [],
+        creation = {
+            "filename": "New.md",
             "source_ids": ["a"],
         }
+        plan = {"notes": [{
+            "file": "Existing.md",
+            "existing": True,
+            "problem": "What exists?",
+            "same_problem": "The source explains the existing question.",
+            "source_ids": ["a"],
+        }]}
         with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / "Existing.md"
-            target.write_text("user content", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
-                stn.write_notes([note], sources, Path(directory))
-            self.assertEqual(target.read_text(encoding="utf-8"), "user content")
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            original = b"What exists?\n***\nOriginal conjecture.\n"
+            target.write_bytes(original)
+            notes, _ = stn.validate_plan(plan, sources, vault=vault)
+            with self.assertRaisesRegex(ValueError, "creating new notes is retired"):
+                stn.write_notes(notes + [creation], sources, vault,
+                                vault=vault, append_existing=True)
+            self.assertEqual(target.read_bytes(), original)
+            self.assertFalse((vault / "New.md").exists())
+            self.assertEqual([p.name for p in vault.iterdir()], ["Existing.md"])
+            with self.assertRaisesRegex(ValueError, "creating new notes is retired"):
+                stn.write_notes(notes + [creation], sources, vault / "stage",
+                                vault=vault)
+            self.assertFalse((vault / "stage").exists())
 
     def test_existing_append_requires_explanation_and_exact_problem(self):
         sources = stn.source_records([SOURCES[0]])
@@ -296,6 +318,9 @@ class SourceToNotesTests(unittest.TestCase):
             stage = vault / "stage"
             staged = stn.write_notes(notes, sources, stage, vault=vault)[0]
             staged_bytes = staged.read_bytes()
+            with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
+                stn.write_notes(notes, sources, stage, vault=vault)
+            self.assertEqual(staged.read_bytes(), staged_bytes)
             self.assertTrue(staged_bytes.startswith(original))
             self.assertIn(
                 b"\r\n---\r\n\r\nFirst exact idea.\r\n\r\nhttps://example.com/a\r\n",
@@ -334,6 +359,33 @@ class SourceToNotesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed after validation"):
                 stn.write_notes(
                     notes, sources, vault, vault=vault, append_existing=True)
+
+    def test_existing_append_rejects_a_change_during_preparation(self):
+        sources = stn.source_records([SOURCES[0]])
+        plan = {"notes": [{
+            "file": "Existing.md",
+            "existing": True,
+            "problem": "What exists?",
+            "same_problem": "The source answers the existing question.",
+            "source_ids": ["a"],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            vault = Path(directory)
+            target = vault / "Existing.md"
+            target.write_bytes(b"What exists?\n***\nOriginal conjecture.\n")
+            notes, _ = stn.validate_plan(plan, sources, vault=vault)
+            updated = b"What exists?\n***\nConjecture edited during preparation.\n"
+            original_file_state = stn.file_state
+
+            def changed_state(path, include_bytes=False):
+                target.write_bytes(updated)
+                return original_file_state(path, include_bytes=include_bytes)
+
+            with patch.object(stn, "file_state", side_effect=changed_state):
+                with self.assertRaisesRegex(ValueError, "changed after validation"):
+                    stn.write_notes(
+                        notes, sources, vault, vault=vault, append_existing=True)
+            self.assertEqual(target.read_bytes(), updated)
 
 
 def readera_backup(path, docs, meta=None):
