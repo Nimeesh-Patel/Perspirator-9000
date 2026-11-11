@@ -16,7 +16,8 @@ runtime, policies, and working explanations.
 | Role | Canonical owner |
 |---|---|
 | Host discovery | installed adapter generated from `SKILL.md` |
-| Run loading and question-to-tool routing | `<vault>/memory/perspirator/Bootstrap.md` |
+| Run loading and scope selection | `<vault>/memory/perspirator/Bootstrap.md` |
+| On-demand mechanism routes | `<vault>/memory/perspirator/Tool Routes.md` |
 | Explanatory method and Theory of LLMs | `<vault>/memory/perspirator/Perspirator.md` |
 | Pre-delivery draft criticism | `<vault>/memory/perspirator/Error Correction role.md` |
 | Selective role execution and parallel delegation | `<vault>/memory/perspirator/Role Delegation.md` |
@@ -37,8 +38,10 @@ supports claims about past work.
 
 ## Runtime and tools
 
-Start with the configured vault's `Bootstrap.md`. It routes questions to
-mechanisms; each command's `--help`, code and tests own its detailed interface.
+Start with the configured vault's `Bootstrap.md`. It loads the active runtime
+and selects material for the current task. Look up a mechanism in
+`Tool Routes.md` when needed. Each command's `--help`, code and tests own its
+detailed interface.
 `Role Delegation.md` owns selecting and running roles in separate contexts.
 `Vault Evolution.md` owns the open-system boundary between the vault and
 bounded native providers.
