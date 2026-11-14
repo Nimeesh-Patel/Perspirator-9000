@@ -17,8 +17,7 @@ from pathlib import Path
 
 from adapters import add_vault_argument
 from contracts import SOURCE_COMPLETENESS, emit_json_utf8
-from note_chunks import frontmatter_fields, section
-from run_check import unfenced_lines
+from note_chunks import frontmatter_fields, section, unfenced_lines
 
 
 ROLE_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")

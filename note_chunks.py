@@ -48,6 +48,27 @@ FORMATION = {
 }
 
 
+_FENCE_MARKER = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def unfenced_lines(text):
+    """Blank fenced examples while preserving line positions for readers of instruction notes."""
+    fence = None
+    for line in text.splitlines():
+        marker = _FENCE_MARKER.match(line)
+        if fence:
+            if (marker and marker.group(1)[0] == fence[0]
+                    and len(marker.group(1)) >= len(fence)
+                    and not marker.group(2).strip()):
+                fence = None
+            yield ""
+        elif marker:
+            fence = marker.group(1)
+            yield ""
+        else:
+            yield line
+
+
 def read_note(path):
     try:
         return path.read_text(encoding="utf-8-sig")
