@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 
 from adapters import add_vault_argument
 from note_chunks import DEFAULT_EXCLUDES
-from obsidian_cli import ObsidianCLI
+from obsidian_cli import ObsidianCLI, cli_error
 from change_transaction import (identity_operation, observe_identity,
                                 public_identity, sha256_file,
                                 verify_identity_precondition)
@@ -30,10 +30,9 @@ def relative_note(value):
 
 def destination(old, name):
     raw = str(name).strip()
-    if not raw or "/" in raw or "\\" in raw:
+    if not raw or "/" in raw or "\\" in raw or ":" in raw:
         raise ValueError("new name must be a filename, not a path")
-    leaf = relative_note(raw)
-    return old.parent / leaf.name
+    return old.parent / (raw if raw.lower().endswith(".md") else f"{raw}.md")
 
 
 def note_files(vault):
@@ -96,7 +95,7 @@ def build_plan(vault, old, new_name, executable="obsidian", timeout=10,
     transaction = identity_operation(
         old_file, new_file, reason="preserve note identity while updating backlinks")
     return {"vault": vault, "old": old.as_posix(), "new": new.as_posix(),
-            "new_name": new.stem, "sha256": sha256_file(old_file),
+            "new_name": new.name, "sha256": sha256_file(old_file),
             "backlinks": backlinks(cli, old.as_posix()),
             "old_links": stale_links(vault, old, unique), "unique": unique,
             "executable": executable, "timeout": timeout, "runner": runner,
@@ -118,6 +117,12 @@ def apply_plan(plan):
     vault = plan["vault"]
     old, new = PurePosixPath(plan["old"]), PurePosixPath(plan["new"])
     old_file, new_file = vault / old, vault / new
+    cli = ObsidianCLI(vault, executable=plan["executable"],
+                      timeout=plan["timeout"], limit=1000000,
+                      runner=plan["runner"])
+    probe = cli.probe()
+    if not probe["ok"]:
+        raise RuntimeError(f"Obsidian unavailable: {probe['error']}")
     if not verify_identity_precondition(plan["transaction"]):
         raise RuntimeError("rename preconditions changed after planning")
     argv = [plan["executable"], f"vault={vault.name}", "rename",
@@ -132,7 +137,7 @@ def apply_plan(plan):
         return public(plan, "indeterminate", do_not_retry=True,
                       observed=observed,
                       error="Obsidian rename timed out; inspect state before any action")
-    if completed.returncode != 0:
+    if completed.returncode != 0 or cli_error(completed.stdout or ""):
         state, observed = observe_identity(plan["transaction"])
         if state != "not-applied":
             return public(plan, "indeterminate", do_not_retry=True,
@@ -149,9 +154,6 @@ def apply_plan(plan):
     remaining = stale_links(vault, old, plan["unique"])
     if remaining:
         failures.append("old wikilink targets remain")
-    cli = ObsidianCLI(vault, executable=plan["executable"],
-                      timeout=plan["timeout"], limit=1000000,
-                      runner=plan["runner"])
     try:
         after = backlinks(cli, new.as_posix()) if new_file.is_file() else {}
     except RuntimeError as exc:

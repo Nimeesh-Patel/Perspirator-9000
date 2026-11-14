@@ -10,7 +10,7 @@ import argparse
 import json
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from adapters import add_vault_argument
 
@@ -28,7 +28,7 @@ def exact_path(value):
     """Normalize and validate an exact vault-relative path."""
     raw = str(value).replace("\\", "/")
     path = PurePosixPath(raw)
-    if path.is_absolute() or not raw or ".." in path.parts:
+    if path.is_absolute() or PureWindowsPath(raw).drive or not raw or ".." in path.parts:
         raise ValueError(f"not a vault-relative exact path: {value}")
     return path.as_posix()
 
@@ -46,6 +46,21 @@ def parsed(stdout):
                 and lines[0].lower().endswith(" found.")):
             return []
         return lines
+
+
+def cli_error(stdout, raw_note=False):
+    """Recognize diagnostics Obsidian can print even on exit zero."""
+    message = stdout.strip()
+    lower = message.lower()
+    if lower.startswith("the cli is unable to find obsidian"):
+        return "unavailable", message
+    if lower == "vault not found.":
+        return "unavailable", message
+    if lower.startswith("error: ") and (
+        not raw_note or lower.startswith('error: file "') and lower.endswith('" not found.')
+    ):
+        return "error", message
+    return None
 
 
 class ObsidianCLI:
@@ -71,6 +86,14 @@ class ObsidianCLI:
                     "data": [], "error": f"{type(exc).__name__}: {exc}"}
         stdout = completed.stdout or ""
         stderr = (completed.stderr or "").strip()
+        # A note body can itself start with "Error:". The raw read commands
+        # can return that text as data, as well as an exact missing-file error.
+        raw_note = argv[2] in {"read", "history:read", "sync:read"}
+        diagnostic = cli_error(stdout, raw_note=raw_note)
+        if diagnostic:
+            status, error = diagnostic
+            return {"ok": False, "status": status, "argv": argv,
+                    "data": [], "error": error}
         if completed.returncode != 0:
             return {"ok": False, "status": "error", "argv": argv,
                     "data": parsed(stdout), "error": stderr or
@@ -87,23 +110,32 @@ class ObsidianCLI:
         intended vault rather than another open one. Bare ``obsidian`` proves
         neither and costs a several-hundred-line help banner.
         """
-        if self._probe is None:
-            result = self._run([self.executable, "vault", "info=name"])
-            data = result.get("data") or []
-            opened = data[0].strip() if isinstance(data, list) and data else ""
-            result["vault_open"] = opened
-            if result["ok"] and opened != self.vault_name:
-                result.update({
-                    "ok": False, "status": "wrong-vault",
-                    "error": f"CLI answers about {opened!r}, "
-                             f"not {self.vault_name!r}"})
+        if self._probe is not None:
+            return self._probe
+        result = self._run([self.executable, f"vault={self.vault_name}",
+                            "vault", "info=path"])
+        if not result["ok"]:
+            return result
+        data = result["data"]
+        opened = Path(data[0]) if isinstance(data, list) and len(data) == 1 else None
+        result["vault_open"] = str(opened) if opened else None
+        if opened is None or not opened.is_absolute():
+            result.update(ok=False, status="unavailable",
+                          error="Obsidian did not report an absolute vault path")
+        elif opened.resolve() != self.vault:
+            result.update(ok=False, status="wrong-vault",
+                          error=f"CLI answers about {opened}, expected {self.vault}")
+        else:
             self._probe = result
-        return self._probe
+        return result
 
     def command(self, name, **options):
         """Run one whitelisted read command without a shell."""
         if name not in READ_ONLY:
             raise ValueError(f"not a read-only Obsidian command: {name}")
+        probe = self.probe()
+        if not probe["ok"]:
+            return probe
         argv = [self.executable, f"vault={self.vault_name}", name]
         for key, value in options.items():
             if value is None or value is False:
@@ -188,14 +220,18 @@ def main():
     cli = ObsidianCLI(args.vault, timeout=args.timeout, limit=args.limit)
     if args.action == "context":
         result = cli.note_context(args.path)
+        ok = result["status"] == "ok"
     elif args.action == "search":
         result = cli.search(args.query, args.path, args.context)
+        ok = result["ok"]
     elif args.action == "base-query":
         result = cli.base_query(args.path, args.view)
+        ok = result["ok"]
     else:
         result = cli.vault_shape()
+        ok = all(item["ok"] for item in result.values())
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

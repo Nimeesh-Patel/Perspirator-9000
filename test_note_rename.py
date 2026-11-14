@@ -26,14 +26,14 @@ class FakeObsidian:
             old = next(item[5:] for item in argv if item.startswith("path="))
             name = next(item[5:] for item in argv if item.startswith("name="))
             old_file = self.vault / old
-            new_file = old_file.with_name(name + ".md")
+            new_file = old_file.with_name(name if "." in name else name + ".md")
             if self.propagate:
                 source = self.vault / "Source.md"
                 source.write_text(source.read_text(encoding="utf-8").replace(
-                    f"[[{Path(old).stem}]]", f"[[{name}]]"), encoding="utf-8")
+                    f"[[{Path(old).stem}]]", f"[[{new_file.stem}]]"), encoding="utf-8")
             old_file.rename(new_file)
             return SimpleNamespace(returncode=0, stdout="Renamed", stderr="")
-        return SimpleNamespace(returncode=0, stdout=self.vault.name, stderr="")
+        return SimpleNamespace(returncode=0, stdout=str(self.vault.resolve()), stderr="")
 
 
 class NoteRenameTests(unittest.TestCase):
@@ -80,6 +80,16 @@ class NoteRenameTests(unittest.TestCase):
             result = note_rename.apply_plan(plan)
             self.assertEqual(result["status"], "partial")
             self.assertIn("old wikilink targets remain", result["failures"])
+
+    def test_dotted_title_keeps_markdown_extension(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = self.fixture(tmp)
+            fake = FakeObsidian(vault)
+            plan = note_rename.build_plan(vault, "Old", "Meeting 2026.11.06",
+                                          runner=fake)
+            result = note_rename.apply_plan(plan)
+            self.assertEqual(result["status"], "applied")
+            self.assertTrue((vault / "Meeting 2026.11.06.md").is_file())
 
     def test_timeout_is_indeterminate_and_forbids_retry(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:

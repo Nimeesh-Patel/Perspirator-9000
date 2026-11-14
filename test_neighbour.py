@@ -317,10 +317,13 @@ class ContractSuite(unittest.TestCase):
                   and round(pairs[0][0], 2) == 0.95, ('pair ranking collapses units to the best note pair', str(pairs)))
 
             calls = []
+            def command_is_probe(argv):
+                return argv[2:] == ["vault", "info=path"]
+
             def fake_runner(argv, **kwargs):
                 calls.append((argv, kwargs))
-                if argv[1:] == ["vault", "info=name"]:
-                    return Completed(root.name)
+                if command_is_probe(argv):
+                    return Completed(str(root.resolve()))
                 command = argv[2]
                 if command == "backlinks":
                     return Completed('[{"file":"source.md"}]')
@@ -338,12 +341,12 @@ class ContractSuite(unittest.TestCase):
                   and context["links"] == ["target one.md"]
                   and context["properties"] == {"type": "Problem"}, ("CLI context combines links backlinks and properties", str(context)))
             command_calls = [(argv, kwargs) for argv, kwargs in calls
-                             if argv[1:2] != ["vault"]]
-            self.assertTrue(calls[0][0] == ["obsidian", "vault", "info=name"], ("CLI probes the open vault name before path commands", str(calls[0])))
+                             if not command_is_probe(argv)]
+            self.assertTrue(calls[0][0] == ["obsidian", f"vault={root.name}", "vault", "info=path"], ("CLI probes the exact vault path before path commands", str(calls[0])))
 
             def other_vault_runner(argv, **kwargs):
-                if argv[1:] == ["vault", "info=name"]:
-                    return Completed("a different vault")
+                if command_is_probe(argv):
+                    return Completed(str(root / "other" / root.name))
                 return Completed("")
             wrong = ObsidianCLI(root, runner=other_vault_runner).note_context("n.md")
             self.assertTrue(wrong["status"] == "wrong-vault", ("CLI refuses context when another vault is open", str(wrong)))
@@ -355,11 +358,11 @@ class ContractSuite(unittest.TestCase):
 
             flaky_backlinks = [True]
             def flaky_runner(argv, **kwargs):
-                if argv[1:] == ["vault", "info=name"]:
-                    return Completed(root.name)
+                if command_is_probe(argv):
+                    return Completed(str(root.resolve()))
                 command = argv[2]
                 if command == "backlinks" and flaky_backlinks and flaky_backlinks.pop(0):
-                    return Completed(stderr="temporary failure", returncode=1)
+                    return Completed('Error: File "retry.md" not found.')
                 if command == "backlinks":
                     return Completed("[]")
                 if command == "properties":
