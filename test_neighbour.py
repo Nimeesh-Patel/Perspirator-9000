@@ -250,7 +250,7 @@ class ContractSuite(unittest.TestCase):
                      "retaining practices that expose mistakes?")
             write(root, "memory/Left.md", f"## Problems\n\n{left}\n")
             write(root, "memory/Right.md", f"## Questions\n\n{right}\n")
-            write(root, "memory/perspirator/runs/derived.md",
+            write(root, "memory/Thales/derived.md",
                   f"## Problems\n\n{left}\n")
             recurrence_index = {
                 "meta": [{"stem": "Left", "text": left},
@@ -261,12 +261,12 @@ class ContractSuite(unittest.TestCase):
                 recurrence = pc.signal_recurrence(
                     root, set(), embedding_threshold=0.9,
                     lexical_threshold=0.9, refresh_index=False,
-                    excluded={"memory/perspirator/runs"})
+                    excluded={"memory/thales"})
             self.assertTrue(len(recurrence) == 1 and recurrence[0]["matched_by"] == ["embedding"], "recurrence reuses the shared substrate")
-            self.assertTrue(all("derived" not in hit["where"] for hit in recurrence), "candidate folder exclusions suppress derived report boilerplate")
+            self.assertTrue(all("derived" not in hit["where"] for hit in recurrence), "explicit folder exclusions suppress derived context")
             (root / "memory" / "Left.md").unlink()
             (root / "memory" / "Right.md").unlink()
-            (root / "memory" / "perspirator" / "runs" / "derived.md").unlink()
+            (root / "memory" / "Thales" / "derived.md").unlink()
 
             unchanged_stub = StubEmbedder()
             unchanged = nb.refresh(root, config, out, embedder=unchanged_stub)

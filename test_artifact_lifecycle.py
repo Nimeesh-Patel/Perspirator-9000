@@ -62,6 +62,7 @@ class ArtifactLifecycleTests(unittest.TestCase):
             declaration.parent.mkdir(parents=True)
             for invalid in (
                     entry(validation="unimplemented"),
+                    entry(validation="frontmatter-state"),
                     entry(path_type="directory", forbidden_patterns=["../*.md"])):
                 declaration.write_text(
                     json.dumps({"artifacts": [invalid]}), encoding="utf-8")
@@ -71,23 +72,23 @@ class ArtifactLifecycleTests(unittest.TestCase):
     def test_inventory_selects_declared_trees_and_preserves_observed_metadata(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
             vault = Path(tmp)
-            runs = vault / "runs"
-            runs.mkdir()
+            evidence = vault / "evidence"
+            evidence.mkdir()
             payload = b"---\nstatus: open\nretained_for: original criticism\n---\nA finding.\n"
-            (runs / "one.md").write_bytes(payload)
-            (runs / "README.md").write_bytes(b"\xff")
+            (evidence / "one.md").write_bytes(payload)
+            (evidence / "README.md").write_bytes(b"\xff")
             # The other tree must not be scanned or interpreted.
             (vault / "other").write_bytes(b"\xff")
-            entries = [entry(name="runs", path="runs", exempt=["README.md"]),
+            entries = [entry(name="evidence", path="evidence", exempt=["README.md"]),
                        entry(name="other", path="other")]
-            result = inventory(vault, entries, ["runs"])
+            result = inventory(vault, entries, ["evidence"])
             self.assertEqual(result["status"], "complete")
             self.assertEqual(len(result["artifacts"]), 1)
             files = result["artifacts"][0]["files"]
-            self.assertEqual([f["path"] for f in files], ["runs/one.md"])
+            self.assertEqual([f["path"] for f in files], ["evidence/one.md"])
             self.assertEqual(files[0]["size"], len(payload))
             self.assertEqual(files[0]["frontmatter"]["retained_for"], "original criticism")
-            self.assertEqual((runs / "one.md").read_bytes(), payload)
+            self.assertEqual((evidence / "one.md").read_bytes(), payload)
             with self.assertRaises(ValueError):
                 inventory(vault, entries, ["undeclared"])
 
@@ -101,17 +102,6 @@ class ArtifactLifecycleTests(unittest.TestCase):
             self.assertEqual(observed["status"], "unavailable")
             self.assertIn("sha256", observed)
             self.assertNotIn("frontmatter", observed)
-
-    def test_status_validation_cannot_ignore_unreadable_proposal(self):
-        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
-            vault = Path(tmp)
-            (vault / "drafts").mkdir()
-            (vault / "drafts/broken.md").write_bytes(b"---\nstatus: \xff\n---\n")
-            problems = lifecycle_problems(vault, [entry(
-                path="drafts", path_type="directory", validation="frontmatter-state",
-                forbidden_states=["completed"])])
-            self.assertEqual(len(problems), 1)
-            self.assertIn("broken.md is unreadable", problems[0])
 
     def test_reparse_root_is_not_followed_or_treated_as_empty(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:

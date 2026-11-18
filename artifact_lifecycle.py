@@ -19,7 +19,6 @@ from note_chunks import frontmatter_fields, read_note
 DECLARATION = Path("memory/perspirator/artifact-lifecycle.json")
 VALIDATION_CLASSES = {
     "current-explanatory-role",
-    "frontmatter-state",
     "rebuildable",
     "rollback-value",
     "unique-evidence",
@@ -79,9 +78,6 @@ def load_lifecycle(vault):
         if forbidden_patterns and path_type != "directory":
             raise ValueError(
                 f"{name}: forbidden_patterns requires path_type: directory")
-        if validation == "frontmatter-state" and path_type not in (None, "directory"):
-            raise ValueError(
-                f"{name}: frontmatter-state requires a directory artifact")
     return entries
 
 
@@ -90,8 +86,8 @@ def lifecycle_problems(vault, entries):
 
     Semantic validation classes remain review conditions; this function does
     not pretend a filename can decide whether evidence is still unique or a
-    rollback still has value. Path presence/type, forbidden surface patterns,
-    and explicit frontmatter states are independently mechanical.
+    rollback still has value. Path presence/type and forbidden surface
+    patterns are independently mechanical.
     """
     vault = Path(vault)
     problems = []
@@ -117,42 +113,14 @@ def lifecycle_problems(vault, entries):
                     f"{entry['name']}: forbidden artifact matches {pattern}: "
                     f"{path.relative_to(target).as_posix()}")
 
-        if entry["validation"] != "frontmatter-state":
-            continue
-        if not target.is_dir():
-            problems.append(
-                f"{entry['name']}: frontmatter-state artifact is not a directory: "
-                f"{entry['path']}")
-            continue
-        pattern = entry.get("pattern", "*.md")
-        exempt = {str(value).casefold() for value in entry.get("exempt", [])}
-        forbidden = {str(value).casefold()
-                     for value in entry.get("forbidden_states", [])}
-        field = entry.get("state_field", "status")
-        for path in sorted(target.glob(pattern)):
-            if path.name.casefold() in exempt:
-                continue
-            try:
-                text = read_note(path)
-            except ValueError as exc:
-                problems.append(f"{entry['name']}: {path.name} is unreadable: {exc}")
-                continue
-            if text is None:
-                problems.append(f"{entry['name']}: {path.name} is unreadable")
-                continue
-            state = str(frontmatter_fields(text).get(field, "")).casefold()
-            if state in forbidden:
-                problems.append(
-                    f"{entry['name']}: {path.name} is terminal ({field}: {state})")
     return problems
 
 
 def inventory(vault, entries, names):
     """Observe explicitly selected artifact trees using the shared safe scanner.
 
-    Include every regular file except declared exemptions, not just files whose
-    status happens to trigger a validation rule. Metadata is untrusted content;
-    neither a terminal state nor a missing retention field authorises removal.
+    Include every regular file except declared exemptions. Metadata is untrusted
+    content; a status or missing retention field does not authorise removal.
     """
     vault = Path(vault).expanduser().resolve(strict=True)
     requested = set(names)

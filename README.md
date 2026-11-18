@@ -23,6 +23,7 @@ runtime, policies, and working explanations.
 | Selective role execution and parallel delegation | `<vault>/memory/perspirator/Role Delegation.md` |
 | Institutional correction from supplied knowledge | `<vault>/memory/perspirator/Optimism role.md` |
 | Task-specific context and explanatory reconstruction | `<vault>/memory/perspirator/Context Recovery role.md` |
+| Evolving working understanding of problems and their connections | `<vault>/memory/Thales/*.md`, maintained under `Note Placement.md` |
 | Working problem records, handoffs and delivery | `<vault>/memory/policies/Error Correction.md` |
 | Editable semantic and write policies | `<vault>/memory/policies/*.md` |
 | Executable mechanisms and enforced invariants | this repository |
@@ -119,7 +120,8 @@ target and run `doctor.py` so the installed enactment cannot silently diverge.
 - [context_query.py](context_query.py) — task-derived, identity-labelled vault
   nominations using the shared batch rankers and original source readback;
 - [artifact_lifecycle.py](artifact_lifecycle.py) — read-only inventory of explicitly
-  selected declared artifact trees; hashes and metadata inform lifecycle review;
+  selected declared artifact trees and path/type/pattern checks; hashes and
+  metadata inform retention decisions owned by the vault policies;
 - [contracts.py](contracts.py) — shared minimal provider/source boundaries; and
 - each tool's `--help` plus its tests — canonical executable interface.
 

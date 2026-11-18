@@ -8,7 +8,6 @@ from pathlib import Path
 
 import note_chunks as nc
 import policy_index as pi
-import doctor
 from problem_half import parse_note
 
 
@@ -24,14 +23,14 @@ it also prevents [[the growth of knowledge]].
 """
 
 MULTILINE_LIST = """---
-title: Runtime review
+title: Policy selection
 ---
 
 ## Conflicts found
 
-1. **Policy delegation vs policy selection.** The runtime does not say
-   whether "current" means every file, only `status: active`, or the
-   Policy Index. This matters because the changelog rule still stands.
+1. **Policy discovery vs policy selection.** A catalogue identifies
+   active policies without deciding which problem bears on the
+   current task. Relevance still requires a connecting explanation.
 2. **Second problem.** A shorter one.
 
 ## Notes
@@ -68,7 +67,7 @@ class ContractSuite(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             p_problem = build(root, "asking dumb questions.md", PROBLEM_NOTE)
-            p_multi = build(root, "memory/perspirator/runs/review.md", MULTILINE_LIST)
+            p_multi = build(root, "memory/Thales/Policy selection.md", MULTILINE_LIST)
             p_fence = build(root, "fenced.md", FENCED)
             build(root, ".trash/ignored.md", PROBLEM_NOTE)
             build(root, "Attachments/skip.md", PROBLEM_NOTE)
@@ -147,7 +146,7 @@ zeta eta theta iota kappa.
             self.assertTrue(" ".join(unit["text"] for unit in plain_units) == plain_text, "non-problem windows preserve source order")
             multi = nc.chunks_for_note(p_multi, root)
             first = next(unit for unit in multi if unit["text"].startswith("1. **Policy"))
-            self.assertTrue(first["text"].count("\n") == 2 and "changelog rule" in first["text"], "non-problem multi-line list item stays one block")
+            self.assertTrue(first["text"].count("\n") == 2 and "connecting explanation" in first["text"], "non-problem multi-line list item stays one block")
             self.assertTrue(first["unit"] == "block" and first["strategy"] == "authored-blocks", "non-problem formation is explicit")
             self.assertTrue(any(unit["text"].startswith("2. **Second") for unit in multi), "a second list item is separate")
             self.assertTrue(first["heading"] == ["Conflicts found"], "heading path recorded")
@@ -181,20 +180,6 @@ zeta eta theta iota kappa.
             self.assertTrue(nc.chunks_for_note(root / "nope.md", root) == [], "missing file returns no units")
             self.assertTrue(nc.chunks_for_note(build(root, "empty.md", ""), root) == [], "empty note returns no units")
             self.assertTrue(nc.chunks_for_note(build(root, "fm.md", "---\ntitle: x\n---\n"), root) == [], "frontmatter-only note returns no units")
-
-            build(root, "memory/perspirator/proposals/open.md",
-                  "---\nstatus: partially-applied\n---\n")
-            build(root, "memory/perspirator/proposals/done.md",
-                  "---\nstatus: completed\n---\n")
-            build(root, "memory/perspirator/proposals/README.md", "# Proposals\n")
-            self.assertTrue(doctor.lifecycle_problems(root, [{
-                      "name": "proposals", "role": "proposal",
-                      "path": "memory/perspirator/proposals",
-                      "validation": "frontmatter-state",
-                      "state_field": "status",
-                      "forbidden_states": ["completed"],
-                      "retire_when": "the decision is terminal",
-                  }]) == ["proposals: done.md is terminal (status: completed)"], "terminal proposals are surfaced by the general lifecycle check")
 
             build(root, "memory/policies/Policy Loader.md", """---
 title: Policy Loader
