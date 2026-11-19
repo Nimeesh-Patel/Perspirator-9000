@@ -24,7 +24,8 @@ SHARED_FILES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
                 "change_transaction.py", "contracts.py", "artifact_lifecycle.py",
                 "contract_copy.py", "installation.py", "doctor.py", "adapters.py",
                 "contract_copies.json",
-                "fixtures/problem_note_conformance.json")
+                "fixtures/problem_note_conformance.json",
+                "fixtures/criticisms_conformance.json")
 
 VAULT_ENV = "PERSPIRATOR_VAULT"
 

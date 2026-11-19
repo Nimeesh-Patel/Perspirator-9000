@@ -7,6 +7,13 @@
         "{home}/people/test/fixtures/problem_note_conformance.json",
         "{home}/Problem Notes/fixtures/problem_note_conformance.json"
       ]
+    },
+    {
+      "name": "Criticisms property",
+      "canonical": "fixtures/criticisms_conformance.json",
+      "copies": [
+        "{home}/people/test/fixtures/criticisms_conformance.json"
+      ]
     }
   ]
 }

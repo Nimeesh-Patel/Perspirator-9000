@@ -96,6 +96,51 @@ def _scalar(value):
     return value
 
 
+def frontmatter_entries(fm):
+    """Top-level frontmatter keys in authored order, without a YAML dependency.
+
+    Yields ``(key, inline, items, other)``: the raw text after the colon, the
+    raw text of each block-sequence item beneath the key (indented or not, as
+    YAML allows) and any other nonblank lines beneath it, such as a nested
+    mapping. The one structural reader for list-valued keys; each caller
+    interprets its own key.
+    """
+    lines = (fm or "").split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        key, colon, inline = line.partition(":")
+        if line[:1].isspace() or line.startswith("-") or not colon:
+            continue
+        items, other = [], []
+        while i < len(lines) and (lines[i].startswith("-") or not lines[i][:1].strip()):
+            item = lines[i].strip()
+            if item.startswith("- ") or item == "-":
+                items.append(item[1:].strip())
+            elif item:
+                other.append(item)
+            i += 1
+        yield key.strip(), inline.strip(), items, other
+
+
+_YAML_NULL = ("", "~", "null", "Null", "NULL")
+
+
+def _entries(inline, items):
+    """A key's authored entries, still quoted: a flow list's parts, the inline
+    scalar, or the block items under an empty or null value."""
+    if inline.startswith("[") and inline.endswith("]"):
+        return [part.strip() for part in inline[1:-1].split(",")] if inline[1:-1].strip() else []
+    return items if inline in _YAML_NULL else [inline, *items]
+
+
+def _values(inline, items):
+    """A key's scalar values. An unquoted null is YAML's empty value, as in
+    Interest; a quoted "null" is text."""
+    return [_scalar(entry) for entry in _entries(inline, items) if entry not in _YAML_NULL]
+
+
 def projection_fields(fm):
     """The frontmatter keys that decide a note's Anki projection.
 
@@ -106,84 +151,73 @@ def projection_fields(fm):
     None when the key is absent and a string (possibly empty) when present.
     """
     fields = {"category": None, "category_error": None, "collection": None}
-    if not fm:
-        return fields
-    lines = fm.split("\n")
     seen = set()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line[:1].isspace():
-            i += 1
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip()
-        if key and not key.startswith("#") and _:
+    for key, inline, items, _ in frontmatter_entries(fm):
+        if key and not key.startswith("#"):
             # Interest's YAML parser rejects a repeated key, and with it the
             # whole discovery, so the note has no deck at all.
             if key in seen:
                 fields["category_error"] = (
                     f"frontmatter repeats the key {key}: Interest rejects the note")
             seen.add(key)
-        if key in ("category", "collection"):
-            items, j = [], i + 1
-            while j < len(lines) and (lines[j].startswith("-") or lines[j][:1].isspace()):
-                item = lines[j].strip()
-                if item.startswith("- ") or item == "-":
-                    items.append(_scalar(item[1:]))
-                j += 1
-            inline = _scalar(value)
-            if inline.startswith("[") and inline.endswith("]"):
-                items = [_scalar(part) for part in inline[1:-1].split(",")]
-                inline = ""
-            names = list(dict.fromkeys(name for name in ([inline] if inline else []) + items if name))
-            if key == "collection":
-                fields["collection"] = names[0] if names else ""
-            elif len(names) == 1 and fields["category"] is None:
-                fields["category"] = names[0]
-            elif len(names) > 1:
-                fields["category_error"] = "category must name one deck"
-            i = j
+        if key not in ("category", "collection"):
             continue
-        i += 1
+        names = list(dict.fromkeys(name for name in _values(inline, items) if name))
+        if key == "collection":
+            fields["collection"] = names[0] if names else ""
+        elif len(names) == 1 and fields["category"] is None:
+            fields["category"] = names[0]
+        elif len(names) > 1:
+            fields["category_error"] = "category must name one deck"
     return fields
 
 
 def parse_frontmatter(fm):
     """category (the deck name) and up: parents, without a YAML dependency."""
-    category, up = projection_fields(fm)["category"], []
-    if not fm:
-        return category, up
-    lines = fm.split("\n")
-    # YAML permits sequence items at the same indentation as their key. The
-    # structural parser treats that spelling like the indented equivalent.
-    lines = [('  ' + line if line.startswith('- ') else line) for line in lines]
-    i = 0
-    while i < len(lines):
-        stripped = lines[i].strip()
-        if stripped.startswith("up:"):
-            up.extend(extract_links(stripped[len("up:"):].strip()))
-            j = i + 1
-            while j < len(lines) and (lines[j].strip() == "" or lines[j][:1].isspace()):
-                up.extend(extract_links(lines[j]))
-                j += 1
-            i = j
+    up = [link for key, inline, items, _ in frontmatter_entries(fm) if key == "up"
+          for value in [inline, *items] for link in extract_links(value)]
+    return projection_fields(fm)["category"], list(dict.fromkeys(up))
+
+
+CRITICISMS_KEY = "criticisms"
+_WHOLE_LINK = re.compile(r"^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$")
+_CRITICISMS_SHAPE = 'criticisms must be links to notes, like "[[Note]]"'
+
+
+def criticism_targets(fm):
+    """Link targets in ``criticisms:``, or the reason the property is unusable.
+
+    Interest's ``CardCriticisms.parse`` owns the rule and
+    ``fixtures/criticisms_conformance.json`` pins this reader to it: each
+    entry is one whole ``[[link]]``; null and blank entries are skipped; any
+    other entry makes the whole property an error rather than a shorter list,
+    because dropping an objection would claim it is not there. Returns
+    ``(targets, error)``; a target keeps any ``#heading`` it names.
+    """
+    entries = [entry[1:] for entry in frontmatter_entries(fm) if entry[0] == CRITICISMS_KEY]
+    if not entries:
+        return [], None
+    inline, items, other = entries[-1]
+    if other:  # a nested mapping, which Interest also refuses
+        return [], _CRITICISMS_SHAPE
+    targets = []
+    for value in _values(inline, items):
+        if not value:
             continue
-        i += 1
-    return category, list(dict.fromkeys(up))
+        match = _WHOLE_LINK.match(value)
+        target = match.group(1).strip() if match else ""
+        if not target:
+            return [], _CRITICISMS_SHAPE
+        targets.append(target)
+    return targets, None
 
 
 def frontmatter_fields(text):
-    """Every top-level ``key: value`` in the frontmatter block."""
-    parsed = parse_note(text)
-    if parsed["frontmatter"] is None:
+    """Every top-level ``key: value`` in the frontmatter block, as text."""
+    fm = parse_note(text)["frontmatter"]
+    if fm is None:
         return {}
-    fields = {}
-    for line in parsed["frontmatter"].split("\n"):
-        if ":" in line and not line[:1].isspace():
-            key, _, value = line.partition(":")
-            fields[key.strip()] = value.strip().strip("'\"")
-    return fields
+    return {key: inline.strip("'\"") for key, inline, _, _ in frontmatter_entries(fm)}
 
 
 def section(text, heading):

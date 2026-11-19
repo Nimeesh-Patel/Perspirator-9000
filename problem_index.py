@@ -31,6 +31,9 @@ Output (JSON array), one object per problem note:
                 collection: withdraws the note or category names >1 deck>",
       "category_error": "<why category: is unusable, or null>",
       "up":       ["<parent note name>", ...],   # [[..]] under up:
+      "criticisms": ["<link target>", ...],  # notes holding open objections to this one
+      "criticisms_error": "<why criticisms: is unusable, or null>",
+      "criticised_by": ["<note name>", ...], # root notes listing this one in criticisms:
       "links":    ["<outbound link target>", ...], # unique, whole body
       "stub":     true|false   # true if the conjecture side is empty
     }
@@ -48,7 +51,9 @@ from pathlib import Path
 # contract itself stays owned by problem_half.parse_note().
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from problem_half import parse_note  # noqa: E402
-from note_chunks import extract_links, parse_frontmatter, projection_fields  # noqa: E402
+from contracts import emit_json_utf8  # noqa: E402
+from note_chunks import (criticism_targets, extract_links, parse_frontmatter,  # noqa: E402
+                         projection_fields)
 
 
 def index_note(path: Path, vault_root: Path):
@@ -68,6 +73,7 @@ def index_note(path: Path, vault_root: Path):
     else:
         deck = category or "Default"
 
+    criticisms, criticisms_error = criticism_targets(frontmatter or "")
     rel = path.relative_to(vault_root).as_posix()
     return {
         "name": path.stem,
@@ -78,6 +84,9 @@ def index_note(path: Path, vault_root: Path):
         "deck": deck,
         "category_error": projection["category_error"],
         "up": up,
+        "criticisms": criticisms,
+        "criticisms_error": criticisms_error,
+        "criticised_by": [],
         "links": extract_links(text),
         "stub": parsed["conjecture"] == "",
     }
@@ -97,6 +106,15 @@ def root_problem_records(vault_root):
         rec = index_note(path, vault_root)
         if rec is not None:
             records.append(rec)
+    by_name = {rec["name"].casefold(): rec for rec in records}
+    for rec in records:
+        for target in rec["criticisms"]:
+            # Resolved by note name, as Obsidian does for a root note; a
+            # #heading only selects a passage of the same note.
+            name = target.split("#")[0].split("/")[-1].strip().casefold()
+            challenged = by_name.get(name)
+            if challenged is not None and rec["name"] not in challenged["criticised_by"]:
+                challenged["criticised_by"].append(rec["name"])
     return records
 
 
@@ -118,7 +136,7 @@ def main(argv=None):
         print(f"wrote {len(records)} problem notes to {args.out}",
               file=sys.stderr)
     else:
-        print(payload)
+        emit_json_utf8(records)
     return 0
 
 

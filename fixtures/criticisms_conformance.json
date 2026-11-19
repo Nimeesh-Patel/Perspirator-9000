@@ -1,0 +1,33 @@
+{
+  "contract": "criticisms-property",
+  "version": 1,
+  "invariants": [
+    "criticisms: lives on the challenged note and lists the notes holding open objections to it",
+    "each entry is one whole wikilink; an alias after | is display only and a #heading stays part of the target",
+    "an absent key, null, an empty list and null or blank entries mean no open criticism",
+    "any other entry makes the whole property an error, never a shorter list"
+  ],
+  "cases": [
+    {"name": "absent", "frontmatter": "up:\n", "targets": []},
+    {"name": "blank template", "frontmatter": "up:\ncriticisms:\n", "targets": []},
+    {"name": "explicit null", "frontmatter": "criticisms: null\n", "targets": []},
+    {"name": "empty flow list", "frontmatter": "criticisms: []\n", "targets": []},
+    {"name": "quoted block items", "frontmatter": "criticisms:\n  - \"[[A]]\"\n  - \"[[B|shown]]\"\n", "targets": ["A", "B"]},
+    {"name": "unquoted block item", "frontmatter": "criticisms:\n  - [[A]]\n", "targets": ["A"]},
+    {"name": "unindented block items", "frontmatter": "criticisms:\n- \"[[A]]\"\n- \"[[B]]\"\ncategory: Morality\n", "targets": ["A", "B"]},
+    {"name": "heading target", "frontmatter": "criticisms:\n  - \"[[A#Scope]]\"\n", "targets": ["A#Scope"]},
+    {"name": "quoted scalar", "frontmatter": "criticisms: \"[[A]]\"\n", "targets": ["A"]},
+    {"name": "quoted flow list", "frontmatter": "criticisms: [\"[[A]]\", \"[[B]]\"]\n", "targets": ["A", "B"]},
+    {"name": "blank and null entries skipped", "frontmatter": "criticisms:\n  -\n  - \"\"\n  - \"[[A]]\"\n  - null\n", "targets": ["A"]},
+    {"name": "plain sentence", "frontmatter": "criticisms:\n  - \"This is wrong\"\n", "error": true},
+    {"name": "link with trailing text", "frontmatter": "criticisms:\n  - \"[[A]] because\"\n", "error": true},
+    {"name": "empty link", "frontmatter": "criticisms:\n  - \"[[ ]]\"\n", "error": true},
+    {"name": "unquoted inline link", "frontmatter": "criticisms: [[A]]\n", "error": true},
+    {"name": "plain scalar", "frontmatter": "criticisms: something\n", "error": true},
+    {"name": "number entry", "frontmatter": "criticisms:\n  - 3\n", "error": true},
+    {"name": "quoted null is text", "frontmatter": "criticisms:\n  - \"null\"\n", "error": true},
+    {"name": "mapping value", "frontmatter": "criticisms:\n  a: b\n", "error": true},
+    {"name": "mapping entry", "frontmatter": "criticisms:\n  - {a: b}\n", "error": true},
+    {"name": "one bad entry spoils the list", "frontmatter": "criticisms:\n  - \"[[A]]\"\n  - \"why?\"\n", "error": true}
+  ]
+}

@@ -1,3 +1,5 @@
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -64,6 +66,8 @@ class RootProblemIndexTests(unittest.TestCase):
             "list.md": ("---\nup:\ncategory:\n  - Institutions\n---\nQ\n***\nA\n", "Institutions", None, "Institutions"),
             "flow.md": ("---\ncategory: [English]\n---\nQ\n***\nA\n", "English", None, "English"),
             "absent.md": ("---\nup: null\n---\nQ\n***\nA\n", None, None, "Default"),
+            # YAML null is no value, so Interest projects to Default.
+            "null.md": ("---\ncategory: null\n---\nQ\n***\nA\n", None, None, "Default"),
             "collection.md": ("---\ncollection: People\n---\n***\n", None, "People", None),
             "empty-collection.md": ("---\ncollection:\ncategory: Morality\n---\nQ\n***\n", "Morality", "", None),
             "two-decks.md": ("---\ncategory:\n- A\n- B\n---\nQ\n***\n", None, None, None),
@@ -83,6 +87,51 @@ class RootProblemIndexTests(unittest.TestCase):
             self.assertTrue(index_note(vault / "two-decks.md", vault)["category_error"])
             self.assertIn("repeats the key category",
                           index_note(vault / "repeated-key.md", vault)["category_error"])
+
+    def test_criticisms_reader_conforms_to_interests_fixture(self):
+        # Interest's CardCriticisms.parse owns the rule; its test suite runs
+        # the same cases, and doctor reports a drifted copy.
+        from note_chunks import criticism_targets
+        fixture = json.loads((Path(__file__).parent / "fixtures"
+                              / "criticisms_conformance.json").read_text(encoding="utf-8"))
+        for case in fixture["cases"]:
+            targets, error = criticism_targets(case["frontmatter"])
+            if case.get("error"):
+                self.assertEqual((targets, bool(error)), ([], True), case["name"])
+            else:
+                self.assertEqual((targets, error), (case["targets"], None), case["name"])
+
+    def test_criticism_relation_is_read_from_both_ends(self):
+        notes = {
+            "Challenged.md": '---\ncriticisms:\n  - "[[objection#Scope]]"\n'
+                             '  - "[[Elsewhere]]"\n---\nQ\n***\nA\n',
+            "Objection.md": "---\ncriticisms:\n  - \"[[Challenged|it]]\"\n---\nWhy not?\n***\n",
+            "Second.md": "---\ncriticisms:\n  - \"[[Objection]]\"\n---\nAnd?\n***\n",
+            "Malformed.md": "---\ncriticisms:\n  - too broad\n---\nQ\n***\n",
+        }
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            vault = Path(tmp)
+            for name, text in notes.items():
+                (vault / name).write_text(text, encoding="utf-8")
+            records = {r["name"]: r for r in root_problem_records(vault)}
+
+        self.assertEqual(records["Challenged"]["criticisms"], ["objection#Scope", "Elsewhere"])
+        self.assertEqual(records["Objection"]["criticised_by"], ["Challenged", "Second"])
+        self.assertEqual(records["Challenged"]["criticised_by"], ["Objection"])
+        self.assertEqual(records["Second"]["criticised_by"], [])
+        self.assertEqual(records["Malformed"]["criticisms"], [])
+        self.assertIn("must be links", records["Malformed"]["criticisms_error"])
+
+    def test_printed_index_is_utf8_whatever_the_console_code_page(self):
+        root = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp)
+            (vault / "ɪpa.md").write_text("Why ɪ?\n***\n", encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(root / "problem_index.py"), str(vault)],
+                capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout.decode("utf-8"))[0]["problem"], "Why ɪ?")
 
     def test_structural_clis_expose_help(self):
         root = Path(__file__).resolve().parent
