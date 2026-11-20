@@ -13,7 +13,6 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import calibre_query as cq
-import source_to_notes as stn
 from contracts import validate_source_record
 
 
@@ -723,7 +722,7 @@ class CalibreQueryTests(unittest.TestCase):
         self.assertEqual(len({record["locator"] for record in result["records"]}), 2)
         self.assertEqual({record["reader_locator"] for record in result["records"]}, {
             "calibre://show-book/Calibre_Library/81"})
-        self.assertEqual(len(stn.source_records(result)), 2)
+        self.assertEqual(len([validate_source_record(r) for r in result["records"]]), 2)
 
     def test_pdf_annotations_distinguish_valid_empty_missing_dependency_and_corruption(self):
         def empty(_payload, **_bounds):

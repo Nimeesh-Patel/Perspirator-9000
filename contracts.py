@@ -47,8 +47,6 @@ def validate_source_record(record):
                if key not in record]
     if missing:
         raise ValueError("source record missing: " + ", ".join(missing))
-    if "url" in record:
-        raise ValueError("source record uses retired 'url'; use 'locator'")
     if not isinstance(record["id"], str) or not record["id"].strip():
         raise ValueError("source record id is empty")
     if not isinstance(record["text"], str) or not record["text"].strip():

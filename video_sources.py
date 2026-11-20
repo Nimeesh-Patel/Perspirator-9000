@@ -3,7 +3,7 @@
 
 A spoken passage has no natural boundary and no page number, so the source
 fact it needs is *when*. This adapts a caption track into the same
-source-neutral source-record contract as `x_posts.py`, with the locator
+source-neutral source-record contract in `contracts.py`, with the locator
 carrying a second offset, so a passage stays re-hearable in its own context.
 
 The caption file is fetched outside this tool, which stays stdlib-only:

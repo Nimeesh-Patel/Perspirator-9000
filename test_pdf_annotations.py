@@ -6,12 +6,13 @@ import hashlib
 import importlib.metadata
 import json
 import unittest
+
+from contracts import validate_source_record
 from pathlib import Path
 from unittest import mock
 
 import calibre_query as cq
 import pdf_annotations as pa
-import source_to_notes as stn
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pdf_annotations"
@@ -141,7 +142,7 @@ class PDFAnnotationExtractionTests(unittest.TestCase):
         self.assertEqual(
             {record["reader_locator"] for record in result["records"]},
             {"calibre://show-book/Calibre_Library/81"})
-        self.assertEqual(len(stn.source_records(result)), 2)
+        self.assertEqual(len([validate_source_record(r) for r in result["records"]]), 2)
 
     def test_partial_quote_uses_rect_without_conflating_reader_contents(self):
         result = pa.parse_pdf_annotations(fixture("mixed.pdf"))
