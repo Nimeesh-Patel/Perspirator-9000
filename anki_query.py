@@ -22,9 +22,11 @@ Examples:
     python anki_query.py notes 1780572893499 --fields
     python anki_query.py cards 1780572893499
     python anki_query.py snapshot --file capture.json --vault "<vault>" --query is:due
+    python anki_query.py compare --help
 """
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 import json
@@ -71,6 +73,38 @@ class SourceAnchors(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "a":
             self.hrefs.extend(value for name, value in attrs if name == "href")
+
+
+def historical_note(fields):
+    """Decode recorded fields only; a historical URL is no current binding."""
+    parts = fields.split('\x1f')
+    front = parts[0]
+    header = SOURCE_HEADER.match(front)
+    source = None
+    if header:
+        links = SourceAnchors()
+        links.feed(header[1])
+        if len(links.hrefs) == 1:
+            uri = urlsplit(links.hrefs[0])
+            params = parse_qs(uri.query)
+            if uri.scheme == 'obsidian' and uri.netloc == 'open':
+                source = {'vault': params.get('vault'), 'file': params.get('file')}
+        front = front[header.end():]
+    class Text(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts = []
+        def handle_data(self, value):
+            self.parts.append(value)
+    sides = [front, *(parts[1:] or [''])]
+    texts = []
+    for side in sides:
+        body = re.split(r'<div class="interest-(?:criticisms|raised)"', side)[0]
+        parser = Text()
+        parser.feed(body)
+        texts.append(' '.join(' '.join(parser.parts).split()))
+    encoded = json.dumps(texts, ensure_ascii=False).encode()
+    return {'source': source, 'content_sha256': hashlib.sha256(encoded).hexdigest()}
 
 
 def integer(value, minimum=0):
@@ -381,7 +415,30 @@ def main(argv=None):
                          help="include exact captured native front HTML; default returns its artifact reference")
     capture.add_argument("--max-input-bytes", type=int, default=4 * 1024 * 1024)
     capture.add_argument("--max-bytes", type=int, default=256 * 1024, help="refuse an oversized context, never silently cut facts")
+    compare = sub.add_parser('compare', help='read-only comparison of two explicitly selected collection backups')
+    for flag in ('before', 'after', 'before-at', 'after-at'):
+        compare.add_argument('--' + flag, required=True)
+    compare.add_argument('--limit', type=int, default=25)
+    compare.add_argument('--max-bytes', type=int, default=256*1024)
+    compare.add_argument('--max-input-bytes', type=int, default=32*1024*1024)
+    compare.add_argument('--max-database-bytes', type=int, default=128*1024*1024)
+    compare.add_argument('--max-rows', type=int, default=500000)
+    compare.add_argument('--include-fields', action='store_true')
     args = parser.parse_args(argv)
+
+    if args.action == 'compare':
+        from anki_history import compare_backups
+        try:
+            result = compare_backups(args.before, args.after, before_at=args.before_at,
+                after_at=args.after_at, decode_note=historical_note, parse_time=capture_time,
+                limit=args.limit, max_bytes=args.max_bytes, max_input_bytes=args.max_input_bytes,
+                max_database_bytes=args.max_database_bytes, max_rows=args.max_rows,
+                include_fields=args.include_fields)
+        except (OSError, ValueError, TypeError) as exc:
+            emit_json_utf8({'status': 'unavailable', 'action': 'compare', 'error': str(exc)})
+            return 2
+        emit_json_utf8(result)
+        return 0
 
     if args.action == "snapshot":
         try:

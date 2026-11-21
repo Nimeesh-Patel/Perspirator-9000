@@ -1,0 +1,18 @@
+{
+  "notes": {
+    "A.md": [],
+    "B.md": ["root alias"],
+    "folder/B.md": ["nested alias", "shared alias"],
+    "Elsewhere.md": ["A", "shared alias"]
+  },
+  "cases": [
+    {"target": "folder/B", "path": "folder/B"},
+    {"target": "FOLDER\\B.MD#Scope|display", "path": "folder/B"},
+    {"target": "B", "path": null},
+    {"target": "root alias", "path": "B"},
+    {"target": "nested alias#Scope", "path": "folder/B"},
+    {"target": "shared alias", "path": null},
+    {"target": "A.md", "path": "A"},
+    {"target": "Missing/B", "path": null}
+  ]
+}

@@ -14,6 +14,11 @@
       "copies": [
         "{home}/people/test/fixtures/criticisms_conformance.json"
       ]
+    },
+    {
+      "name": "Context-free link identity",
+      "canonical": "fixtures/link_resolution_conformance.json",
+      "copies": ["{home}/people/test/fixtures/link_resolution_conformance.json"]
     }
   ]
 }

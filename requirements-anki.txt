@@ -1,0 +1,2 @@
+# Only compressed .anki21b backups need this; other Anki queries do not import it.
+zstandard>=0.25,<1

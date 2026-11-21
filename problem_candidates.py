@@ -21,8 +21,9 @@ PROBLEMISH = re.compile(r"problem|conflict|criticism|question", re.I)
 # One structural parser for the whole toolkit; see note_chunks.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adapters import add_vault_argument  # noqa: E402
+from link_targets import link_key, vault_link_targets  # noqa: E402
 from note_chunks import (all_chunks, bullets, read_note as read,  # noqa: E402
-                         section, vault_links)
+                         section, vault_links, iter_notes, extract_links)
 from neighbour import (content_words, inverse_document_frequency,  # noqa: E402
                        lexical_coverage, load_index)
 
@@ -43,6 +44,9 @@ def load_config(vault):
     exempt = {b.strip().lower() for b in bullets(section(text, "## Exempt"))}
     excluded = {b.strip().replace("\\", "/").strip("/").casefold()
                 for b in bullets(section(text, "## Excluded folders"))}
+    unknown = set(signals) - {"recurrence", "hub-stub", "unresolved-target"}
+    if unknown:
+        raise SystemExit(f"STOP: unsupported candidate signals: {', '.join(sorted(unknown))}")
     return signals, exempt, excluded
 
 
@@ -152,25 +156,25 @@ def signal_hub_stub(vault, max_bytes, min_referrers):
     return hits
 
 
-def signal_never_written(vault, min_referrers):
-    refs, existing, _ = vault_links(vault)
-    # basic-memory writes permalink-style links; they resolve to a real note
-    # through its slug, so they are not unwritten concepts.
-    def slug(name):
-        return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-    slugs = {slug(stem) for stem in existing}
+def signal_unresolved_target(vault, min_referrers):
+    targets = vault_link_targets(vault)
+    refs = {}
+    for path in iter_notes(vault):
+        for target in extract_links(path.read_text(encoding="utf-8-sig")):
+            refs.setdefault(link_key(target), set()).add(path)
     hits = []
     for target, referrers in refs.items():
-        if target.lower() in existing or slug(target) in slugs:
+        if target in targets:
             continue
         if len(referrers) < min_referrers:
             continue
-        if re.search(r"\.(png|jpg|jpeg|gif|svg|pdf)$", target, re.I) or "/" in target:
+        if re.search(r"\.(png|jpg|jpeg|gif|svg|pdf)$", target, re.I):
             continue
-        hits.append({"signal": "never-written", "score": len(referrers),
-                     "where": sorted(p.stem for p in referrers)[:4],
-                     "text": target, "also": f"{len(referrers)} referrers, no file"})
+        hits.append({"signal": "unresolved-target", "score": len(referrers),
+                     "where": sorted(p.relative_to(vault).as_posix() for p in referrers)[:4],
+                     "text": target, "observed_vault": str(vault.resolve()),
+                     "also": "No unique path/name/alias in this observed vault; "
+                             "cause unknown (ambiguity, rename, deletion, delivery or unwritten)."})
     hits.sort(key=lambda h: -h["score"])
     return hits
 
@@ -203,8 +207,8 @@ def main():
     if "hub-stub" in signals:
         a, b = signals["hub-stub"][:2]
         hits += signal_hub_stub(vault, int(a), int(b))
-    if "never-written" in signals:
-        hits += signal_never_written(vault, int(signals["never-written"][0]))
+    if "unresolved-target" in signals:
+        hits += signal_unresolved_target(vault, int(signals["unresolved-target"][0]))
 
     if args.json:
         print(json.dumps({"signals": list(signals), "exempt": sorted(exempt),

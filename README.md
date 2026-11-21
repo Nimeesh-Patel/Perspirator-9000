@@ -92,6 +92,15 @@ reports `unavailable`. Neighbour retrieval uses `numpy`, `torch`, and
 `transformers`. Obsidian CLI is an optional provider, not an installation
 prerequisite.
 
+`anki_query.py compare` reads two explicitly selected dated collection
+backups (or closed SQLite copies), compares note/card/review records by ID,
+and reports bounded records with complete totals and omissions. It makes no
+live collection or scheduling changes. Compressed AnkiDroid backups need
+`python -m pip install -r requirements-anki.txt`; other Anki queries do not
+import that optional dependency. `compare --help` lists input, database, row
+and output limits. Caller-supplied dates and a shared collection identity are
+not independently established by a file name or an ID overlap.
+
 Install the bounded PDF annotation dependency with:
 
 ```bash

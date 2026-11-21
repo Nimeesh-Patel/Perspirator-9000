@@ -9,8 +9,9 @@ import os
 from pathlib import Path
 
 SHARED_FILES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
-                "note_chunks.py", "neighbour.py", "obsidian_cli.py",
+                "note_chunks.py", "link_targets.py", "neighbour.py", "obsidian_cli.py",
                 "policy_index.py", "role_harness.py", "context_query.py", "note_rename.py", "anki_query.py",
+                "anki_history.py", "requirements-anki.txt",
                 "calibre_query.py", "document_text.py", "document_query.py",
                 "pdf_annotations.py", "pdf_ocr.py", "windows_ocr.ps1", "requirements-pdf.txt",
                 "legacy_doc.py", "windows_doc.ps1",
@@ -24,7 +25,7 @@ SHARED_FILES = ("problem_half.py", "problem_index.py", "problem_candidates.py",
                 "contract_copy.py", "installation.py", "doctor.py", "adapters.py",
                 "contract_copies.json",
                 "fixtures/problem_note_conformance.json",
-                "fixtures/criticisms_conformance.json")
+                "fixtures/criticisms_conformance.json", "fixtures/link_resolution_conformance.json")
 
 VAULT_ENV = "PERSPIRATOR_VAULT"
 

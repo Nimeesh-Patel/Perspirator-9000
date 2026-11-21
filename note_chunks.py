@@ -92,7 +92,13 @@ def _scalar(value):
     """A YAML plain or quoted scalar's text, without a YAML dependency."""
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        value = value[1:-1].strip()
+        if value[0] == "'":
+            value = value[1:-1].replace("''", "'").strip()
+        else:
+            try:
+                value = json.loads(value).strip()
+            except ValueError:
+                value = value[1:-1].strip()
     return value
 
 
@@ -131,7 +137,28 @@ def _entries(inline, items):
     """A key's authored entries, still quoted: a flow list's parts, the inline
     scalar, or the block items under an empty or null value."""
     if inline.startswith("[") and inline.endswith("]"):
-        return [part.strip() for part in inline[1:-1].split(",")] if inline[1:-1].strip() else []
+        # A comma inside a quoted title/alias is content, not a list boundary.
+        parts, start, quote, escaped = [], 1, None, False
+        for i in range(1, len(inline)-1):
+            ch = inline[i]
+            if escaped:
+                escaped = False
+            elif quote == '"' and ch == '\\':
+                escaped = True
+            elif quote:
+                if quote == "'" and ch == "'" and inline[i+1:i+2] == "'":
+                    escaped = True
+                elif ch == quote:
+                    quote = None
+            elif ch in "\"'" and not inline[start:i].strip():
+                quote = ch
+            elif ch == ',':
+                parts.append(inline[start:i].strip())
+                start = i + 1
+        if quote:
+            return [inline]  # malformed value; never invent shorter entries
+        parts.append(inline[start:-1].strip())
+        return parts if inline[1:-1].strip() else []
     return items if inline in _YAML_NULL else [inline, *items]
 
 
