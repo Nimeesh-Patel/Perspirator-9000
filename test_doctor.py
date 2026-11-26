@@ -46,12 +46,11 @@ class DoctorSourceComparisonTests(unittest.TestCase):
         for relative in self.shared:
             text = '{"contracts": []}' if relative.endswith(".json") else "# original\n"
             (self.source / relative).write_text(text, encoding="utf-8")
-            (self.installed / relative).write_text(text, encoding="utf-8")
         (self.installed / "SKILL.md").write_text(
-            adapters.render(self.template, self.vault, self.installed),
+            adapters.render(self.template, self.vault, self.source),
             encoding="utf-8",
         )
-        write_manifest(self.installed, [*self.shared, "SKILL.md"])
+        write_manifest(self.installed, ["SKILL.md"])
 
     def run_installed_doctor(self, source=None):
         args = argparse.Namespace(
@@ -60,9 +59,8 @@ class DoctorSourceComparisonTests(unittest.TestCase):
         )
         output = io.StringIO()
         with (
-            patch.object(doctor, "__file__", str(self.installed / "doctor.py")),
+            patch.object(doctor, "__file__", str(self.source / "doctor.py")),
             patch.object(doctor, "SHARED_FILES", self.shared),
-            patch.object(adapters, "SHARED_FILES", self.shared),
             patch.object(doctor, "RESULTS", []),
             patch.object(doctor, "arguments", return_value=args),
             patch.object(doctor, "validate_vault"),
@@ -71,43 +69,38 @@ class DoctorSourceComparisonTests(unittest.TestCase):
             result = doctor.main()
         return result, output.getvalue()
 
-    def test_installed_copy_without_source_cannot_claim_source_equality(self):
-        (self.installed / "probe.py").write_text("# locally modified\n", encoding="utf-8")
-
+    def test_canonical_toolkit_is_validated_once_for_thin_adapter(self):
         result, output = self.run_installed_doctor()
 
         self.assertEqual(result, 0, output)
-        self.assertIn("repository source comparison unavailable", output)
-        self.assertNotIn("installed shared file matches source", output)
-        self.assertNotIn("render matches canonical bootstrap source exactly", output)
-        self.assertIn("[ok  ] installed shared file exists: probe.py", output)
+        self.assertIn("[ok  ] shared source exists: probe.py", output)
+        self.assertIn("[ok  ] adapter points to the canonical toolkit and vault", output)
         self.assertIn("[ok  ] generated-file ownership is current", output)
-        self.assertTrue(output.rstrip().endswith("repository source comparison unavailable"))
 
-    def test_explicit_source_detects_modified_installed_copy(self):
-        (self.installed / "probe.py").write_text("# locally modified\n", encoding="utf-8")
+    def test_explicit_source_detects_adapter_still_pointing_to_an_installed_copy(self):
+        (self.installed / "SKILL.md").write_text(
+            adapters.render(self.template, self.vault, self.installed),
+            encoding="utf-8",
+        )
 
         result, output = self.run_installed_doctor(str(self.source / "SKILL.md"))
 
         self.assertEqual(result, 1, output)
-        self.assertIn("[FAIL] installed shared file matches source: probe.py", output)
-        self.assertIn("[ok  ] render matches canonical bootstrap source exactly", output)
-        self.assertNotIn("repository source comparison unavailable", output)
+        self.assertIn("[FAIL] adapter points to the canonical toolkit and vault", output)
 
-    def test_missing_installed_file_still_fails_without_source(self):
-        (self.installed / "probe.py").unlink()
+    def test_missing_canonical_tool_fails(self):
+        (self.source / "probe.py").unlink()
 
         result, output = self.run_installed_doctor()
 
         self.assertEqual(result, 1, output)
-        self.assertIn("[FAIL] installed shared file exists: probe.py", output)
+        self.assertIn("[FAIL] shared source exists: probe.py", output)
 
     def test_explicit_rendered_adapter_is_not_accepted_as_canonical_source(self):
         result, output = self.run_installed_doctor(str(self.installed / "SKILL.md"))
 
         self.assertEqual(result, 1, output)
-        self.assertIn("[FAIL] canonical source template is available", output)
-        self.assertNotIn("installed shared file matches source", output)
+        self.assertIn("Canonical template unavailable", output)
 
 
 if __name__ == "__main__":

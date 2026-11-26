@@ -17,7 +17,7 @@ from unittest.mock import patch
 import numpy as np
 
 import neighbour as nb
-from obsidian_cli import ObsidianCLI, exact_path, parsed
+from obsidian_cli import ObsidianCLI, default_executable, exact_path, parsed
 import problem_candidates as pc
 
 
@@ -36,6 +36,20 @@ class StubEmbedder:
             vector = np.frombuffer(digest, dtype=np.uint8).astype("float32")
             out.append(vector / (np.linalg.norm(vector) or 1.0))
         return np.vstack(out)
+
+
+class ObsidianDiscoveryTests(unittest.TestCase):
+    def test_windows_installation_is_found_if_path_does_not_resolve(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "Obsidian" / "Obsidian.com"
+            executable.parent.mkdir()
+            executable.touch()
+            with (
+                patch("obsidian_cli.shutil.which", return_value=None),
+                patch("obsidian_cli.sys.platform", "win32"),
+                patch.dict(os.environ, {"ProgramFiles": tmp}),
+            ):
+                self.assertEqual(default_executable(), str(executable))
 
 
 class FakePretrained:
@@ -335,7 +349,7 @@ class ContractSuite(unittest.TestCase):
                     return Completed('["a.md"]')
                 return Completed("")
 
-            cli = ObsidianCLI(root, runner=fake_runner, limit=1)
+            cli = ObsidianCLI(root, executable="obsidian", runner=fake_runner, limit=1)
             context = cli.note_context("folder/note.md")
             self.assertTrue(context["backlinks"] == ["source.md"]
                   and context["links"] == ["target one.md"]

@@ -1,8 +1,9 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from installation import (manifest_problems, retire_stale_owned_files,
+from installation import (MANIFEST_NAME, digest, manifest_problems, retire_stale_owned_files,
                           write_manifest)
 
 
@@ -47,6 +48,20 @@ class InstallationOwnershipTests(unittest.TestCase):
 
             self.assertEqual(
                 manifest_problems(root, ["fixtures/contract.json"]), [])
+
+    def test_legacy_manifest_cannot_name_a_file_outside_the_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "adapter"
+            directory.mkdir()
+            unrelated = root / "unrelated.py"
+            unrelated.write_text("untouched", encoding="utf-8")
+            (directory / MANIFEST_NAME).write_text(json.dumps({
+                "files": {"../unrelated.py": digest(unrelated)}
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "safe relative paths"):
+                retire_stale_owned_files(directory, [])
+            self.assertTrue(unrelated.is_file())
 
 
 if __name__ == "__main__":

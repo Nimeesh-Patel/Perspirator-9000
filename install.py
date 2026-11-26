@@ -9,15 +9,15 @@ Examples:
 """
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
 from adapters import (ADAPTERS, SHARED_FILES, TARGETS, adapter_directories,
                       add_adapter_directory_arguments, add_vault_argument,
-                      absolute, generated_files, parse_target, render,
+                      absolute, parse_target, render,
                       selected_keys)
-from installation import retire_stale_owned_files, write_manifest
+from installation import (digest, load_manifest, replace_text,
+                          retire_stale_owned_files, retirement_plan, write_manifest)
 
 
 def target_type(value):
@@ -66,6 +66,27 @@ def main():
     repo = Path(__file__).resolve().parent
     vault = absolute(args.vault)
     jobs = destinations(args)
+    template_path = repo / "SKILL.md"
+    template = template_path.read_text(encoding="utf-8")
+    if any(not (repo / path).is_file() for path in SHARED_FILES):
+        raise SystemExit("error: canonical structural toolkit is incomplete")
+    rendered = render(template, vault, repo)
+
+    plans = []
+    for key, directory in jobs:
+        filename = ADAPTERS[key]["filename"]
+        adapter = directory / filename
+        if directory == repo or adapter.is_symlink():
+            raise SystemExit(f"error: unsafe adapter destination: {adapter}")
+        previous = load_manifest(directory)["files"].get(filename)
+        if adapter.exists() and not (
+            adapter.is_file()
+            and (adapter.read_bytes() == rendered.encode("utf-8")
+                 or digest(adapter) == previous)
+        ):
+            raise SystemExit(f"error: adapter has unowned or modified content: {adapter}")
+        # Check all targets before changing the first one.
+        plans.append((key, directory, retirement_plan(directory, [filename])))
 
     print("Perspirator installer")
     print(f"  target: {args.target}")
@@ -74,23 +95,16 @@ def main():
         print(f"  {ADAPTERS[key]['label']}: {directory / ADAPTERS[key]['filename']}")
     print()
 
-    template = (repo / "SKILL.md").read_text(encoding="utf-8")
-    for key, directory in jobs:
+    for key, directory, stale in plans:
         directory.mkdir(parents=True, exist_ok=True)
-        desired = generated_files(key)
-        retired = retire_stale_owned_files(directory, desired)
-        for relative in SHARED_FILES:
-            destination = directory / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(repo / relative, destination)
-        adapter = directory / ADAPTERS[key]["filename"]
-        adapter.write_text(render(template, vault, directory),
-                           encoding="utf-8", newline="\n")
-        write_manifest(directory, desired)
+        filename = ADAPTERS[key]["filename"]
+        replace_text(directory / filename, rendered)
+        retired = retire_stale_owned_files(directory, [filename], planned=stale)
+        write_manifest(directory, [filename])
         if retired:
             print(f"  retired owned files: {', '.join(retired)}")
 
-    print("Installed; unrelated files and modified retired outputs were not removed.")
+    print(f"Installed entry points for the shared toolkit at {repo}.")
     doctor = repo / "doctor.py"
     for key, directory in jobs:
         print(f"  {ADAPTERS[key]['label']}: {ADAPTERS[key]['invoke']}")

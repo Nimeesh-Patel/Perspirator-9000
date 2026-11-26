@@ -8,6 +8,8 @@ of silently confusing a closed app or stale CLI index with an empty result.
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -22,6 +24,21 @@ READ_ONLY = {
     "sync:history", "sync:read", "sync:status", "tags", "tasks",
     "unresolved", "vault", "vaults", "version", "wordcount",
 }
+
+
+def default_executable():
+    """Find the native CLI even when a Windows host inherited an old PATH."""
+    on_path = shutil.which("obsidian")
+    if on_path:
+        return on_path
+    if sys.platform == "win32":
+        for directory in (Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
+                          Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+                          / "Programs"):
+            candidate = directory / "Obsidian" / "Obsidian.com"
+            if candidate.is_file():
+                return str(candidate)
+    return "obsidian"
 
 
 def exact_path(value):
@@ -64,11 +81,11 @@ def cli_error(stdout, raw_note=False):
 
 
 class ObsidianCLI:
-    def __init__(self, vault, executable="obsidian", timeout=5, limit=5,
+    def __init__(self, vault, executable=None, timeout=5, limit=5,
                  runner=subprocess.run):
         self.vault = Path(vault).expanduser().resolve()
         self.vault_name = self.vault.name
-        self.executable = executable
+        self.executable = default_executable() if executable is None else executable
         self.timeout = timeout
         self.limit = max(1, int(limit))
         self.runner = runner

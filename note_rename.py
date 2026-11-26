@@ -75,7 +75,7 @@ def stale_links(vault, old, unique=None):
     return hits
 
 
-def build_plan(vault, old, new_name, executable="obsidian", timeout=10,
+def build_plan(vault, old, new_name, executable=None, timeout=10,
                runner=subprocess.run):
     vault = Path(vault).expanduser().resolve()
     old = relative_note(old)
@@ -98,7 +98,7 @@ def build_plan(vault, old, new_name, executable="obsidian", timeout=10,
             "new_name": new.name, "sha256": sha256_file(old_file),
             "backlinks": backlinks(cli, old.as_posix()),
             "old_links": stale_links(vault, old, unique), "unique": unique,
-            "executable": executable, "timeout": timeout, "runner": runner,
+            "executable": cli.executable, "timeout": timeout, "runner": runner,
             "transaction": transaction}
 
 
@@ -171,7 +171,7 @@ def arguments(argv=None):
     parser.add_argument("old", help="exact vault-relative old note path")
     parser.add_argument("new_name", help="new filename, with optional .md")
     add_vault_argument(parser)
-    parser.add_argument("--executable", default="obsidian")
+    parser.add_argument("--executable", help="override the discovered Obsidian CLI")
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--apply", action="store_true",
                         help="invoke Obsidian once; default is inspection only")

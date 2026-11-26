@@ -7,8 +7,7 @@ from pathlib import Path
 
 from adapters import (ADAPTERS, FIRST_CLASS, SHARED_FILES, TARGETS,
                       adapter_directories, add_adapter_directory_arguments,
-                      add_vault_argument, absolute, generated_files,
-                      parse_target, render, selected_keys, slash)
+                      add_vault_argument, absolute, parse_target, render, selected_keys)
 
 RESULTS = []
 
@@ -27,12 +26,6 @@ from policy_index import active_policy_surface  # noqa: E402
 from artifact_lifecycle import lifecycle_problems, load_lifecycle  # noqa: E402
 from contract_copy import validate_contract_copies  # noqa: E402
 from installation import manifest_problems  # noqa: E402
-
-
-def normalized_adapter(text, vault, tools_dir):
-    return (text.replace("\\", "/")
-            .replace(slash(vault), "{{VAULT_PATH}}")
-            .replace(slash(tools_dir), "{{TOOLS_DIR}}"))
 
 
 def check_active_note(label, path):
@@ -92,56 +85,30 @@ def validate_shared_files(source_dir):
         check(f"shared source exists: {name}", (source_dir / name).is_file(),
               str(source_dir / name))
 
-    # The manifest is hand-maintained, so the invariant it exists to protect —
-    # the shipped toolkit is the repository toolkit — has to be checked against
-    # the directory rather than against itself. Otherwise a new script is
-    # simply never installed and every listed check still passes.
+    # Check the required toolkit inventory against the source directory.
     present = {path.name for path in source_dir.glob("*.py")
                if not path.name.startswith("test_")} - NOT_SHIPPED
     listed_scripts = {name for name in SHARED_FILES if "/" not in name
                       and name.endswith(".py")}
     unlisted = sorted(present - listed_scripts)
-    check("every source script is listed for install", not unlisted,
-          "unlisted, so never installed: " + ", ".join(unlisted) if unlisted else "")
+    check("every source script is in the toolkit inventory", not unlisted,
+          ", ".join(unlisted))
     copy_problems = validate_contract_copies(source_dir)
     check("generated contract fixtures match their canonical source",
           not copy_problems, "; ".join(copy_problems))
 
 
-def validate_adapter(key, adapter, tools_dir, vault, template, source_dir):
+def validate_adapter(key, directory, expected):
     print(f"\n{ADAPTERS[key]['label']} adapter")
+    filename = ADAPTERS[key]["filename"]
+    adapter = directory / filename
     if not check("adapter exists", adapter.is_file(), str(adapter)):
-        return None
-
+        return
     text = adapter.read_text(encoding="utf-8-sig", errors="replace")
-    normalized_text = text.replace("\\", "/").lower()
-
-    bootstrap = f"{slash(vault)}/memory/perspirator/Bootstrap.md"
-    check("names the bootstrap note", bootstrap.lower() in normalized_text, bootstrap)
-    unresolved = any(marker in text for marker in ("{{VAULT_PATH}}", "{{TOOLS_DIR}}"))
-    check("contains no unresolved path placeholders", not unresolved)
-    check("points at its structural toolkit",
-          slash(tools_dir).lower() in normalized_text, slash(tools_dir))
-
-    for relative in SHARED_FILES:
-        installed = tools_dir / relative
-        check(f"installed shared file exists: {relative}", installed.is_file(),
-              str(installed))
-        if source_dir is not None:
-            source = source_dir / relative
-            if installed.is_file() and source.is_file():
-                check(f"installed shared file matches source: {relative}",
-                      installed.read_bytes() == source.read_bytes())
-
-    desired = generated_files(key)
-    ownership_problems = manifest_problems(tools_dir, desired)
+    check("adapter points to the canonical toolkit and vault", text == expected)
+    ownership_problems = manifest_problems(directory, [filename])
     check("generated-file ownership is current", not ownership_problems,
           "; ".join(ownership_problems))
-
-    if template is not None:
-        check("render matches canonical bootstrap source exactly",
-              text == render(template, vault, tools_dir))
-    return text
 
 
 def target_type(value):
@@ -174,7 +141,10 @@ def main():
         candidate_text = candidate.read_text(encoding="utf-8-sig", errors="replace")
         if "{{VAULT_PATH}}" in candidate_text and "{{TOOLS_DIR}}" in candidate_text:
             template = candidate_text
-    source_dir = candidate.parent if template is not None else None
+    if template is None:
+        print(f"Canonical template unavailable: {candidate} must contain both path placeholders")
+        return 1
+    source_dir = candidate.parent
 
     if args.target == "Auto":
         selected = [key for key in FIRST_CLASS
@@ -184,13 +154,7 @@ def main():
 
     print(f"Perspirator doctor - target: {args.target}")
     print(f"Vault: {vault}")
-    if source_dir is None:
-        if args.source:
-            check("canonical source template is available", False,
-                  f"{candidate} must contain both path placeholders")
-        else:
-            print("  [note] repository source comparison unavailable; "
-                  "use --source with the canonical SKILL.md template")
+    print(f"Shared toolkit: {source_dir}")
     if not selected:
         check("an installed adapter was discovered", False,
               "use --target or install an adapter")
@@ -199,36 +163,15 @@ def main():
         selected = []
 
     validate_vault(vault)
-    validate_shared_files(source_dir or here)
+    validate_shared_files(source_dir)
 
-    rendered = {}
+    expected = render(template, vault, source_dir)
     for key in selected:
-        tools_dir = directories[key]
-        adapter = tools_dir / ADAPTERS[key]["filename"]
-        text = validate_adapter(key, adapter, tools_dir, vault, template, source_dir)
-        if text is not None:
-            rendered[key] = (text, tools_dir)
-
-    if len(rendered) > 1:
-        print("\nCross-adapter consistency")
-        keys = sorted(rendered)
-        first_key = keys[0]
-        first_text, first_tools = rendered[first_key]
-        baseline = normalized_adapter(first_text, vault, first_tools)
-        for key in keys[1:]:
-            text, tools_dir = rendered[key]
-            check(f"{first_key} and {key} share one bootstrap semantics",
-                  normalized_adapter(text, vault, tools_dir) == baseline)
-        for relative in SHARED_FILES:
-            paths = [tools / relative for _, tools in rendered.values()]
-            same = (all(path.is_file() for path in paths) and
-                    len({path.read_bytes() for path in paths}) == 1)
-            check(f"all adapters share file bytes: {relative}", same)
+        validate_adapter(key, directories[key], expected)
 
     print()
     if RESULTS and all(RESULTS):
-        coverage = "; repository source comparison unavailable" if source_dir is None else ""
-        print(f"all {len(RESULTS)} checks passed{coverage}")
+        print(f"all {len(RESULTS)} checks passed")
         return 0
     print(f"{RESULTS.count(False)} of {len(RESULTS)} checks FAILED")
     return 1

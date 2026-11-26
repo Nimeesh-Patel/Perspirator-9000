@@ -3,10 +3,26 @@
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from tempfile import NamedTemporaryFile
 
 
 MANIFEST_NAME = ".perspirator-install.json"
+
+
+def replace_text(path, text):
+    """Replace one generated file without exposing a partial write."""
+    path = Path(path)
+    temporary = None
+    try:
+        with NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(text)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def digest(path):
@@ -15,6 +31,8 @@ def digest(path):
 
 def load_manifest(directory):
     path = Path(directory) / MANIFEST_NAME
+    if path.is_symlink():
+        raise ValueError(f"install ownership manifest is a symlink: {path}")
     if not path.exists():
         return {"version": 1, "files": {}}
     try:
@@ -23,24 +41,29 @@ def load_manifest(directory):
         raise ValueError(f"cannot read install ownership manifest: {exc}") from exc
     files = payload.get("files") if isinstance(payload, dict) else None
     if not isinstance(files, dict) or any(
-            not isinstance(name, str) or not isinstance(value, str)
+            not name or "\\" in name or ":" in name
+            or PurePosixPath(name).is_absolute()
+            or any(part in ("", ".", "..") for part in name.split("/"))
+            or not isinstance(value, str)
             for name, value in files.items()):
-        raise ValueError("install ownership manifest needs a files hash map")
+        raise ValueError("install ownership manifest needs safe relative paths and hashes")
     return payload
 
 
 def stale_owned_files(directory, desired):
     """Classify previously generated files no longer in the install surface."""
-    directory = Path(directory)
+    directory = Path(directory).resolve()
     desired = set(desired)
     stale = []
     for name, expected in load_manifest(directory)["files"].items():
         if name in desired:
             continue
         path = directory / name
-        if not path.exists():
+        if path.is_symlink() or path.resolve() != path:
+            stale.append({"name": name, "state": "redirected"})
+        elif not path.exists():
             continue
-        if not path.is_file():
+        elif not path.is_file():
             stale.append({"name": name, "state": "not-a-file"})
         else:
             actual = digest(path)
@@ -51,17 +74,27 @@ def stale_owned_files(directory, desired):
     return stale
 
 
-def retire_stale_owned_files(directory, desired):
-    """Delete only unchanged retired outputs; refuse locally modified ones."""
+def retirement_plan(directory, desired):
     stale = stale_owned_files(directory, desired)
     unsafe = [item for item in stale if item["state"] != "unchanged"]
     if unsafe:
         names = ", ".join(f"{item['name']} ({item['state']})" for item in unsafe)
         raise RuntimeError(
             "retired managed files need criticism before deletion: " + names)
-    directory = Path(directory)
+    return stale
+
+
+def retire_stale_owned_files(directory, desired, *, planned=None):
+    """Delete only unchanged retired outputs inside the adapter directory."""
+    stale = retirement_plan(directory, desired)
+    if planned is not None and stale != planned:
+        raise RuntimeError("retired managed files changed after installation preflight")
+    directory = Path(directory).resolve()
     for item in stale:
-        (directory / item["name"]).unlink()
+        path = directory / item["name"]
+        if path.is_symlink() or path.resolve() != path or digest(path) != item["expected_sha256"]:
+            raise RuntimeError(f"retired managed file changed before deletion: {path}")
+        path.unlink()
     return [item["name"] for item in stale]
 
 
@@ -73,8 +106,7 @@ def write_manifest(directory, names):
         "files": {name: digest(directory / name) for name in sorted(names)},
     }
     path = directory / MANIFEST_NAME
-    path.write_text(json.dumps(payload, indent=2) + "\n",
-                    encoding="utf-8", newline="\n")
+    replace_text(path, json.dumps(payload, indent=2) + "\n")
     return path
 
 

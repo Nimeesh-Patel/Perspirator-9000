@@ -29,13 +29,10 @@ runtime, policies, and working explanations.
 | Executable mechanisms and enforced invariants | this repository |
 | Evidence retention and exact bot records | `<vault>/memory/policies/Note Deletion.md` and `Bot grants.md` |
 
-Installed adapters and copied scripts are generated artifacts. They do not own
-policy. Run `doctor.py` from the repository, or supply its canonical `SKILL.md`
-with `--source`, to check drift against that independent source. An installed
-doctor without a canonical source checks local structure and ownership and
-reports source comparison as unavailable. These checks do not judge an
-argument or whether a draft answered the task. Retained execution evidence
-supports claims about past work.
+Each installed adapter points to this shared checkout and the configured
+vault. Run `doctor.py` from the checkout to validate both pointers and the
+toolkit. These checks cover installation and declared contracts. Retained
+execution evidence supports claims about past work.
 
 ## Runtime and tools
 
@@ -51,8 +48,8 @@ bounded native providers.
 `context_query.py nominate` uses the shared rankers to nominate source notes
 for original-source reading. Their vault role instructions own interpretation.
 
-There is no hidden daemon. Editing vault instructions changes the next run;
-changing copied repository tools requires reinstalling the affected target.
+Local agents use the shared tools directly. Reinstall an adapter when its
+template changes or either directory moves.
 
 ## Install and verify
 
@@ -67,11 +64,18 @@ Targets are `ClaudeCode` (default), `Codex`, `All`, and `Custom`. `Custom`
 requires `--destination`; directory overrides are available through
 `--claude-dir`, `--codex-dir`, and `--destination`.
 
-Installation replaces only files named in Perspirator's generated manifest. It
-does not remove unrelated agent files. The adapter declaration in `adapters.py`
-owns host names, aliases, directories, invocation text, and validation options.
-The same module owns the shared relative-file install surface, including
+Installation writes a small entry point for each target. When upgrading a
+copy-based installation, it retires only files whose hashes still match the
+old installer manifest. Switch any external consumers of those copies to the
+checkout before upgrading. The adapter declaration in `adapters.py` owns
+host names, aliases, directories, invocation text, and validation options.
+The same module owns the required toolkit inventory, including
 contract declarations and canonical fixtures.
+
+For live vault operations, enable **Command line interface** in Obsidian's
+General settings and make the official Obsidian plugin available in the host.
+`/perspirate` loads the relevant Obsidian instructions when a task needs
+them. See [Obsidian's connector setup](https://obsidian.md/help/connectors).
 
 Native providers also need their own application setup. Calibre requires a
 literal-loopback Content Server with local write disabled; the adapter never
@@ -116,14 +120,14 @@ python -m unittest discover -p "test_*.py"
 The documented discovery command also runs the chunking and neighbour contract
 checks; they must not survive solely behind standalone __main__ entry points.
 The tests use synthetic fixtures; neighbour tests use a stub embedder and do
-not download a model. After changing copied tools, reinstall the affected
-target and run `doctor.py` so the installed enactment cannot silently diverge.
+not download a model. Run `doctor.py` to check the target entry points against
+the shared checkout.
 
 ## Repository entry points
 
 - [SKILL.md](SKILL.md) — minimal host-neutral locator template;
 - [install.py](install.py) and [adapters.py](adapters.py) — generated host packaging;
-- [doctor.py](doctor.py) — runtime, contract, lifecycle, and installed-copy validation;
+- [doctor.py](doctor.py) — runtime, contract, lifecycle, and entry-point validation;
 - [role_harness.py](role_harness.py) — small role discovery surface, bounded exact
   handoff snapshots and response identity/freshness checks;
 - [context_query.py](context_query.py) — task-derived, identity-labelled vault

@@ -115,11 +115,6 @@ def adapter_directories(args):
     return directories
 
 
-def generated_files(key):
-    """Relative files owned by one generated adapter installation."""
-    return [*SHARED_FILES, ADAPTERS[key]["filename"]]
-
-
 def absolute(path):
     return Path(path).expanduser().resolve(strict=False)
 
