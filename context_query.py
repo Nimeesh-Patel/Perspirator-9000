@@ -15,6 +15,7 @@ from urllib.parse import quote
 from adapters import add_vault_argument
 from contracts import emit_json_utf8, provider_result
 from note_chunks import frontmatter_fields, iter_notes
+from obsidian_cli import ObsidianCLI
 from problem_half import parse_note
 from role_harness import canonical, exact_path, freshness, reparse, snapshot
 
@@ -81,12 +82,46 @@ def scalar_title(fields):
     return value if value and not value.startswith(("[", "{", "|", ">", "&", "*", "!")) else None
 
 
-def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None,
+def native_nominations(vault, searches, k, nominate_path, errors):
+    """Keep Obsidian's search order separate from source identity and ranking."""
+    cli = ObsidianCLI(vault, limit=k)
+    entries = []
+    for number, query in enumerate(searches, 1):
+        entry = {"provider": "obsidian", "query_index": number, "query": query,
+                 "status": "complete", "candidates": []}
+        entries.append(entry)
+        result = cli.search(query)
+        paths = result["data"]
+        if not result["ok"] or not (
+            isinstance(paths, list) and all(isinstance(path, str) for path in paths)
+        ):
+            entry.update(status=result["status"] if not result["ok"] else "error",
+                         error=result["error"] or "Obsidian did not return a list of search paths")
+            errors.append({"channel": "native_search", "query_index": number,
+                           "status": entry["status"], "error": entry["error"]})
+            continue
+        entry["returned"] = len(paths)
+        entry["omitted_after_limit"] = max(0, len(paths) - k)
+        entry["omitted_non_markdown"] = 0
+        for position, path in enumerate(paths[:k], 1):
+            if not path.lower().endswith(".md"):
+                entry["omitted_non_markdown"] += 1
+                continue
+            note = nominate_path(path, {"channel": "native_search", "query_index": number,
+                                        "position": position})
+            if note is None:
+                entry["status"] = "partial"
+            else:
+                entry["candidates"].append({"note": note, "position": position})
+    return entries
+
+
+def nominate(vault, *, texts=(), named=(), searches=(), k=10, graph="configured", corpus=None,
              rank="both", refresh_index=True, max_bytes):
     """Return bounded nominations, preserving independent supplied facets.
 
-    Named-only use never loads a retrieval index or embedding model. All text
-    facets share neighbour.match_batch. No source is selected by this function.
+    Only text facets load the neighbour index and embedding model. Native
+    search forwards explicit Obsidian query syntax to the running app.
     """
     if max_bytes <= 0:
         raise ValueError("max-bytes must be positive")
@@ -99,10 +134,14 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
     if corpus not in (None, "all", "vault", "memory"):
         raise ValueError("unknown corpus selection")
     texts, named = list(texts), [relative_name(value) for value in named]
-    if not texts and not named:
-        raise ValueError("supply at least one --text or --named nomination")
+    searches = list(searches)
+    if not texts and not named and not searches:
+        raise ValueError("supply at least one --search, --text, or --named nomination")
     if any(not isinstance(text, str) or not text.strip() for text in texts):
         raise ValueError("every text facet must be nonempty")
+    if any(not isinstance(query, str) or not query.strip() or "\x00" in query
+           for query in searches):
+        raise ValueError("every native search query must be nonempty text without NUL")
     supplied_vault = Path(os.path.abspath(Path(vault).expanduser()))
     if not supplied_vault.is_dir():
         raise ValueError(f"vault directory unavailable: {supplied_vault}")
@@ -117,7 +156,7 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         if value in observations:
             return observations[value]
         try:
-            source, item = note_observation(vault, value)
+            source, _ = note_observation(vault, value)
         except (OSError, ValueError) as exc:
             error = {"note": value, "status": "unavailable", "error": str(exc)}
             errors.append(error)
@@ -150,6 +189,7 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
             return
         entry = candidates.setdefault(source["note"], {**source, "reasons": []})
         entry["reasons"].append(reason)
+        return source["note"]
 
     for value in named:
         is_path = "/" in value or value.lower().endswith(".md")
@@ -168,10 +208,10 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
             status = "unavailable"
         named_channel.append({"requested": value, "status": status, "candidates": found})
 
+    native = native_nominations(vault, searches, k, nominate_path, errors) if searches else []
     ranked, index_header, refresh = [], None, None
     if texts:
-        # Lazy import keeps the named route independent even of loading the
-        # optional neighbour module and its index configuration.
+        # Keep named and native discovery independent of neighbour dependencies.
         try:
             from neighbour import match_batch
             batch = match_batch(str(vault), [{"text": text, "note": None, "file": None}
@@ -228,6 +268,8 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
     ]
     if name_requests:
         limits.append("Name scan uses note_chunks default structural exclusions; explicit paths can name excluded notes.")
+    if searches:
+        limits.append("Native search uses Obsidian query syntax and provider limits; the ranking corpus filter applies only to text facets.")
     if texts and not refresh_index:
         limits.append("Ambient retrieval used the existing index without refreshing it.")
     graph_partial = any(query["graph"].get("status") not in ("ok", "disabled")
@@ -238,6 +280,7 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         "vault-context-query", "nominate",
         "partial" if errors or graph_partial or missing_nominations else "complete",
         scope={"vault": str(vault), "named": named, "text_facets": texts,
+               "native_search": {"queries": searches, "k_per_query": k},
                "ambient": {"enabled": bool(texts), "k_per_facet": k,
                            "rank": rank, "corpus": corpus or "all", "graph": graph},
                "name_scan": {"notes_observed": scanned,
@@ -246,7 +289,7 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         freshness={"observed_at": observed_at, "index": index_header,
                    "selected_source_checks": current},
         records=list(candidates.values()), errors=errors,
-        version=VERSION, channels={"named": named_channel, "ranked": ranked},
+        version=VERSION, channels={"named": named_channel, "native_search": native, "ranked": ranked},
         index_refresh=refresh, byte_limit=max_bytes)
     encoded = canonical(result) + b"\n"
     if len(encoded) > max_bytes:
@@ -257,13 +300,19 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    command = sub.add_parser("nominate", help="nominate exact names and independent ranked facets")
+    command = sub.add_parser("nominate", help="nominate exact names, native searches and ranked facets")
     add_vault_argument(command)
-    command.add_argument("--text", action="append", default=[])
-    command.add_argument("--named", action="append", default=[])
+    command.add_argument("--search", action="append", default=[],
+                         help="Obsidian query, including native operators (repeatable)")
+    command.add_argument("--text", action="append", default=[],
+                         help="text facet for neighbour retrieval (repeatable)")
+    command.add_argument("--named", action="append", default=[],
+                         help="exact note path, stem or scalar title (repeatable)")
     command.add_argument("--k", type=int, default=10)
-    command.add_argument("--graph", choices=("configured", "obsidian", "filesystem", "none"), default="configured")
-    command.add_argument("--corpus", choices=("memory", "vault", "all"))
+    command.add_argument("--graph", choices=("configured", "obsidian", "filesystem", "none"),
+                         default="configured", help="graph expansion for ranked text facets")
+    command.add_argument("--corpus", choices=("memory", "vault", "all"),
+                         help="scope for ranked text facets; use path: for native search")
     command.add_argument("--rank", choices=("both", "embedding", "lexical"), default="both")
     command.add_argument("--no-refresh", action="store_true")
     command.add_argument("--max-bytes", type=int, required=True)
@@ -274,7 +323,8 @@ def arguments(argv=None):
 def main(argv=None):
     args = arguments(argv)
     try:
-        result = nominate(args.vault, texts=args.text, named=args.named, k=args.k,
+        result = nominate(args.vault, texts=args.text, named=args.named,
+                          searches=args.search, k=args.k,
                           graph=args.graph, corpus=args.corpus, rank=args.rank,
                           refresh_index=not args.no_refresh, max_bytes=args.max_bytes)
         if args.out:

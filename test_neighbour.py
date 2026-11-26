@@ -409,21 +409,21 @@ class ContractSuite(unittest.TestCase):
                             "backlinks": [], "links": [], "properties": {}}
 
             graph_results = [{"note": "a.md"}, {"note": "c.md"}]
-            mixed = nb.expand_graph(root, graph_results, config, "obsidian", {},
+            mixed = nb.expand_graph(root, graph_results, config, "obsidian", dict,
                                     cli=ContextCLI({"c.md"}))
             self.assertTrue(mixed["provider"] == "mixed"
                   and mixed["status"] == "partial-fallback"
                   and [item["provider"] for item in mixed["notes"]]
                   == ["obsidian", "filesystem"]
                   and mixed["notes"][1]["status"] == "fallback", ("one graph failure falls back only for that note", str(mixed)))
-            all_failed = nb.expand_graph(root, graph_results, config, "obsidian", {},
+            all_failed = nb.expand_graph(root, graph_results, config, "obsidian", dict,
                                         cli=ContextCLI({"a.md", "c.md"}))
             self.assertTrue(all_failed["provider"] == "filesystem"
                   and all_failed["status"] == "fallback"
                   and len(all_failed["issues"]) == 2, ("total graph failure remains explicit", str(all_failed)))
             no_fallback = dict(config)
             no_fallback["graph"] = dict(config["graph"], fallback="none")
-            refused = nb.expand_graph(root, graph_results, no_fallback, "obsidian", {},
+            refused = nb.expand_graph(root, graph_results, no_fallback, "obsidian", dict,
                                       cli=ContextCLI({"c.md"}))
             self.assertTrue(refused["provider"] == "obsidian"
                   and refused["status"] == "unavailable", ("disabled graph fallback preserves the Obsidian error", str(refused)))

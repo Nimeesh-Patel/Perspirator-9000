@@ -45,8 +45,10 @@ detailed interface.
 bounded native providers.
 
 `role_harness.py` discovers roles and prepares exact, bounded handoffs;
-`context_query.py nominate` uses the shared rankers to nominate source notes
-for original-source reading. Their vault role instructions own interpretation.
+`context_query.py nominate` brings together exact note paths, native Obsidian
+queries (`--search`), and neighbour facets (`--text`) for original-source
+reading. Search-only and named-only runs need no embedding index. Their vault
+role instructions own interpretation.
 
 Local agents use the shared tools directly. Reinstall an adapter when its
 template changes or either directory moves.

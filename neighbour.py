@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime
+from functools import cache
 from itertools import zip_longest
 from pathlib import Path
 
@@ -566,7 +567,7 @@ def drop_exempt(paths, exempt):
                        for entry in exempt)]
 
 
-def expand_graph(vault, results, config, mode, refs, cli=None):
+def expand_graph(vault, results, config, mode, get_refs, cli=None):
     """Expand selected note paths after ranking; never alter vector scores."""
     if mode == "none":
         return {"provider": "none", "status": "disabled", "notes": []}
@@ -575,7 +576,7 @@ def expand_graph(vault, results, config, mode, refs, cli=None):
     exempt = config.get("exempt") or ()
     notes = [result["note"] for result in results[:limit]]
     if selected == "filesystem":
-        contexts = [filesystem_context(vault, note, refs, limit) for note in notes]
+        contexts = [filesystem_context(vault, note, get_refs(), limit) for note in notes]
         return {"provider": "filesystem",
                 "status": "ok" if all(item["status"] == "ok" for item in contexts) else "partial",
                 "notes": contexts}
@@ -602,7 +603,7 @@ def expand_graph(vault, results, config, mode, refs, cli=None):
             if context["status"] == "ok":
                 expanded.append(context)
                 continue
-            fallback = filesystem_context(vault, note, refs, limit)
+            fallback = filesystem_context(vault, note, get_refs(), limit)
             if fallback["status"] == "ok":
                 fallback["status"] = "fallback"
             fallback["issue"] = context.get("error")
@@ -636,7 +637,7 @@ def cmd_index(args):
 
 
 def match_query(vault, config, meta, vectors, query, query_vector,
-                args, refs, cli=None):
+                args, get_refs, cli=None):
     """Rank and expand one validated query using shared loaded resources."""
     source_note = query["note"]
     scores = vectors @ query_vector
@@ -661,6 +662,7 @@ def match_query(vault, config, meta, vectors, query, query_vector,
                                      args.k, getattr(args, "rank", "both"))
 
     src_stem = Path(source_note).stem if source_note else None
+    refs = get_refs() if src_stem else {}
     src_referrers = {p.stem for p in refs.get(src_stem, set())} if src_stem else set()
     src_links = note_link_stems(vault, source_note) if source_note else set()
     results = []
@@ -680,7 +682,7 @@ def match_query(vault, config, meta, vectors, query, query_vector,
             "shares_referrers": sorted(src_referrers & dest_referrers)[:5],
             "snippet": snippet(unit["text"]),
         })
-    graph = expand_graph(vault, results, config, args.graph, refs, cli=cli)
+    graph = expand_graph(vault, results, config, args.graph, get_refs, cli=cli)
     return {"query_note": source_note, "results": results, "graph": graph,
             "distribution": score_distribution(scores, eligible)}
 
@@ -842,13 +844,16 @@ def match_batch(vault, queries, *, index=None, refresh_index=True,
     header, meta, vectors = loaded["header"], loaded["meta"], loaded["vectors"]
     embedder = Embedder(config["model"], config["formation"]["max-tokens"])
     query_vectors = embedder([query["text"] for query in queries])
-    refs, _, _ = vault_links(vault, excludes=config["exempt"] or None)
+    @cache
+    def get_refs():
+        return vault_links(vault, excludes=config["exempt"] or None)[0]
+
     selected = config["graph"]["provider"] if graph == "configured" else graph
     cli = (ObsidianCLI(vault, timeout=config["graph"]["timeout"],
                        limit=config["graph"]["limit"])
            if selected == "obsidian" else None)
     matches = [match_query(vault, config, meta, vectors, query, vector,
-                           args, refs, cli=cli)
+                           args, get_refs, cli=cli)
                for query, vector in zip(queries, query_vectors)]
     result_header = public_header(header)
     result_header["freshness"] = match_freshness(

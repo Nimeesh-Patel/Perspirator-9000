@@ -45,6 +45,43 @@ class ContextQueryTests(unittest.TestCase):
         self.assertIsNone(result["freshness"]["index"])
         self.assertTrue(any("alias" in value for value in result["scope"]["unobserved"]))
 
+    def test_native_search_keeps_query_order_limit_and_original_identity(self):
+        queries = ['path:nested "answer"', '"nothing here"']
+        provider = [
+            {"ok": True, "data": ["nested/Two.md", "One.md", "third.md"]},
+            {"ok": True, "data": []},
+        ]
+        with patch.object(cq, "ObsidianCLI") as cli, \
+                patch.object(nb, "match_batch", side_effect=AssertionError("ranker loaded")):
+            cli.return_value.search.side_effect = provider
+            result = self.nominate(searches=queries, named=["One.md"], k=2)
+        cli.assert_called_once_with(self.vault, limit=2)
+        self.assertEqual([call.args[0] for call in cli.return_value.search.call_args_list], queries)
+        first, empty = result["channels"]["native_search"]
+        self.assertEqual(first["candidates"], [{"note": "nested/Two.md", "position": 1},
+                                              {"note": "One.md", "position": 2}])
+        self.assertEqual(first["omitted_after_limit"], 1)
+        self.assertEqual(empty["status"], "complete")
+        self.assertEqual(empty["candidates"], [])
+        record = next(record for record in result["records"] if record["note"] == "One.md")
+        self.assertEqual([reason["channel"] for reason in record["reasons"]],
+                         ["named", "native_search"])
+        self.assertIsNone(result["freshness"]["index"])
+
+    def test_native_search_failure_or_stale_hit_preserves_independent_evidence(self):
+        with patch.object(cq, "ObsidianCLI") as cli:
+            cli.return_value.search.side_effect = [
+                {"ok": False, "status": "wrong-vault", "error": "different vault", "data": []},
+                {"ok": True, "data": ["missing.md", "../outside.md", "nested/Two.md"]},
+            ]
+            result = self.nominate(searches=["first", "second"], named=["One.md"])
+        failed, partial = result["channels"]["native_search"]
+        self.assertEqual((result["status"], failed["status"], partial["status"]),
+                         ("partial", "wrong-vault", "partial"))
+        self.assertEqual(partial["candidates"], [{"note": "nested/Two.md", "position": 3}])
+        self.assertEqual([record["note"] for record in result["records"]],
+                         ["One.md", "nested/Two.md"])
+
     def test_explicit_paths_can_name_ambient_exempt_artifacts(self):
         self.write(".perspirator/Explicit.md", "Preserved exact artifact.\n")
         result = self.nominate(named=[".perspirator/Explicit.md"])
@@ -213,7 +250,7 @@ class ContextQueryTests(unittest.TestCase):
             self.assertEqual(cq.main(arguments[:-3] + ["10", "--out", str(missing)]), 1)
         self.assertFalse(missing.exists())
 
-    def test_shared_batch_initializes_index_embedder_links_and_native_cache_once(self):
+    def test_shared_batch_defers_link_scan_and_reuses_resources(self):
         # The batch API is tested with opaque vectors; no optional numerical or
         # transformer dependency is needed to verify orchestration identity.
         config = {"model": "stub", "formation": {"max-tokens": 256},
@@ -234,11 +271,14 @@ class ContextQueryTests(unittest.TestCase):
                 patch.object(nb, "ObsidianCLI") as cli, \
                 patch.object(nb, "match_query", return_value={"results": []}) as match:
             result = nb.match_batch(str(self.vault), [{"text": "first"}, {"text": "second"}])
+            links.assert_not_called()
+            first_refs, second_refs = [call.args[-1] for call in match.call_args_list]
+            self.assertIs(first_refs(), second_refs())
+            links.assert_called_once_with(self.vault, excludes=["omitted"])
+            cli.assert_called_once()
         load.assert_called_once()
         embedder.assert_called_once_with("stub", 256)
         embedding.assert_called_once_with(["first", "second"])
-        links.assert_called_once()
-        cli.assert_called_once()
         self.assertIs(match.call_args_list[0].kwargs["cli"], match.call_args_list[1].kwargs["cli"])
         self.assertEqual(len(result["queries"]), 2)
         self.assertEqual(json.loads(cq.canonical(result))["refresh"]["path"], str(index_path))
