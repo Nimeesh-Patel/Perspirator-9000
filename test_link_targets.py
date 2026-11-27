@@ -24,7 +24,7 @@ class LinkIdentityTests(unittest.TestCase):
             for name, target in [('Qualified', 'folder/B'), ('Ambiguous', 'B'), ('Alias', 'root alias.md#Scope')]:
                 (vault/f'{name}.md').write_text(f'---\ncriticisms: "[[{target}]]"\n---\nQ\n***\nA')
             records = {r['name']: r for r in root_problem_records(vault)}
-            self.assertEqual(records['B']['criticised_by'], ['Alias'])
+            self.assertEqual(records['B']['criticises'], ['Alias.md'])
             self.assertEqual(records['Qualified']['criticism_resolution'][0]['path'], 'folder/B')
             self.assertIsNone(records['Ambiguous']['criticism_resolution'][0]['path'])
 

@@ -283,7 +283,8 @@ class ContractSuite(unittest.TestCase):
             (root / "memory" / "Thales" / "derived.md").unlink()
 
             unchanged_stub = StubEmbedder()
-            unchanged = nb.refresh(root, config, out, embedder=unchanged_stub)
+            with patch.object(nb, "_atomic_savez", side_effect=AssertionError("unchanged index was rewritten")):
+                unchanged = nb.refresh(root, config, out, embedder=unchanged_stub)
             self.assertTrue(unchanged["embedded"] == 0 and unchanged_stub.calls == [], "unchanged vault does not call the model")
 
             a.write_text("problem a?\n***\nconjecture a, revised.\n", encoding="utf-8")
@@ -671,34 +672,29 @@ class NameCandidateTests(unittest.TestCase):
             return SimpleNamespace(stdout=outputs[command], stderr="", returncode=0)
         return run
 
-    def test_every_note_a_name_can_mean_is_listed_with_obsidians_pick(self):
+    def test_every_matching_name_or_alias_is_listed_without_a_default_pick(self):
         import obsidian_cli
         with tempfile.TemporaryDirectory() as tmp:
             vault = Path(tmp).resolve()
             cli = obsidian_cli.ObsidianCLI(vault, executable="obsidian", runner=self.runner({
                 "vault": str(vault) + "\n",
                 "files": "interest.md\nmemory/Thales/Interest.md\nPinterest.md\n",
-                "aliases": "interest\tWhat is interest.md\nother\tx.md\n",
-                "file": "path\tinterest.md\nname\tinterest\n"}))
-            result = cli.name_candidates("Interest")
+                "aliases": "interest.md\tWhat is interest.md\nother\tx.md\n"}))
+            result = cli.name_candidates("Interest.md")
         self.assertEqual(result["status"], "ambiguous")
-        self.assertEqual(result["obsidian_choice"], "interest.md")
-        self.assertEqual([(c["note"], c["matched_by"], c["obsidian_choice"])
-                          for c in result["candidates"]],
-                         [("What is interest.md", ["alias"], False),
-                          ("interest.md", ["name"], True),
-                          ("memory/Thales/Interest.md", ["name"], False)])
+        self.assertEqual([(c["note"], c["matched_by"]) for c in result["candidates"]],
+                         [("What is interest.md", ["alias"]),
+                          ("interest.md", ["name"]),
+                          ("memory/Thales/Interest.md", ["name"])])
 
     def test_a_missing_name_is_unresolved_not_an_error(self):
         import obsidian_cli
         with tempfile.TemporaryDirectory() as tmp:
             vault = Path(tmp).resolve()
             cli = obsidian_cli.ObsidianCLI(vault, executable="obsidian", runner=self.runner({
-                "vault": str(vault) + "\n", "files": "a.md\n", "aliases": "",
-                "file": 'Error: File "Nope" not found.\n'}))
+                "vault": str(vault) + "\n", "files": "a.md\n", "aliases": ""}))
             result = cli.name_candidates("Nope")
-        self.assertEqual((result["status"], result["candidates"], result["obsidian_choice"]),
-                         ("unresolved", [], None))
+        self.assertEqual((result["status"], result["candidates"]), ("unresolved", []))
 
     def test_candidates_are_ordered_by_meaning_and_unindexed_ones_say_so(self):
         import numpy as np
@@ -706,11 +702,10 @@ class NameCandidateTests(unittest.TestCase):
                 {"note": "a.md", "unit": "conjecture", "side": "answer", "text": "anki projection"},
                 {"note": "b.md", "unit": "conjecture", "side": "answer", "text": "fun and interest"}]
         cosine = np.array([0.1, 0.7, 0.4])
-        ranked = nb.rank_candidates("anki cards", ["b.md", "a.md", "c.md"], meta, cosine)
+        ranked = nb.rank_candidates(["b.md", "a.md", "c.md"], meta, cosine)
         self.assertEqual([(item["note"], item.get("rank")) for item in ranked],
                          [("a.md", 1), ("b.md", 2), ("c.md", None)])
-        self.assertEqual(ranked[0]["best_unit"], "conjecture")
-        self.assertGreater(ranked[0]["lexical_score"], 0)
+        self.assertEqual(ranked[0]["score"], 0.7)
         self.assertEqual(ranked[2]["status"], "not-indexed")
 
 

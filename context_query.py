@@ -19,16 +19,12 @@ from problem_half import parse_note
 from role_harness import canonical, exact_path, freshness, reparse, snapshot
 
 
-VERSION = 3
+VERSION = 4
 PREVIEW_CHARS = 220
 
 
 def relative_name(value):
-    """Validate a vault-relative Markdown path, or a bare note name.
-
-    A value ending in ``.md`` is an exact path. Anything else is a name, which
-    is resolved to every note it can mean rather than to Obsidian's one pick.
-    """
+    """Normalize a name or path without inferring which the user supplied."""
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ValueError("named note must be nonempty text")
     value = value.strip().replace("\\", "/")
@@ -38,13 +34,16 @@ def relative_name(value):
     return path.as_posix()
 
 
-def is_exact_path(value):
-    return value.lower().endswith(".md")
+def markdown_path(value):
+    value = relative_name(value)
+    if not value.lower().endswith(".md"):
+        raise ValueError(f"expected an exact vault-relative Markdown path: {value}")
+    return value
 
 
 def note_observation(vault, value):
     """Read one exact original using the existing role snapshot mechanism."""
-    value = relative_name(value)
+    value = markdown_path(value)
     path = exact_path(value, vault, inside=vault)
     item = snapshot(value, path)
     fields = frontmatter_fields(item["text"].removeprefix("\ufeff"))
@@ -60,26 +59,46 @@ def note_observation(vault, value):
         "sha256": item["sha256"], "bytes": item["bytes"],
         "locator": ("obsidian://open?vault=" + quote(vault.name, safe="")
                     + "&file=" + quote(path.relative_to(vault).as_posix(), safe="")),
-        "provenance": {"provider": "filesystem", "identity": "raw-byte-sha256"},
         "observation_status": "current",
         "declared": fields,
-        "metadata_representation": (
-            "note_chunks.frontmatter_fields top-level value strings; "
-            "compound YAML, aliases, authorship and adoption are not interpreted"),
-        "structure": "problem-note" if is_problem else "no-separator",
         "preview": {"text": preview, "characters": len(preview),
                     "total_characters": len(preview_text),
                     "truncated": len(preview_text) > PREVIEW_CHARS,
-                    "limit_characters": PREVIEW_CHARS,
                     "side": "problem" if is_problem else "body",
-                    "representation": "normalized-newlines-without-frontmatter",
-                    "conjecture_omitted": is_problem,
-                    "source_reading": "not-a-complete-source-reading"},
+                    "conjecture_omitted": is_problem},
     }
     return source
 
 
-def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None,
+def verify_ranking(facet, observations, records, revisions):
+    """Only carry scores and excerpts supported by the observed revision."""
+    rejected = {}
+    for key in ("results", "candidate_ranking"):
+        if key not in facet:
+            continue
+        checked = []
+        for hit in facet[key]:
+            note = hit["note"]
+            observed = observations.get(note, {})
+            source = records.get(observed.get("note"), observed)
+            status = source.get("observation_status", "unavailable")
+            if status == "current":
+                if hit.get("status") == "not-indexed" or revisions.get(note) == source["sha256"]:
+                    checked.append(hit)
+                    continue
+                status = "stale-index" if revisions.get(note) else "unverified-index"
+            rejected[note] = {"note": note, "status": status}
+            if key == "candidate_ranking":
+                checked.append(rejected[note])
+        facet[key] = checked
+    graph = facet["graph"]
+    if any(item["path"] in rejected for item in graph.get("notes", [])):
+        facet["graph"] = {**graph, "status": "partial", "notes": [
+            item for item in graph["notes"] if item["path"] not in rejected]}
+    return rejected.values()
+
+
+def nominate(vault, *, texts=(), names=(), paths=(), k=10, graph="none", corpus=None,
              rank="both", refresh_index=True, max_bytes):
     """Return bounded nominations, preserving independent supplied facets.
 
@@ -95,9 +114,10 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         raise ValueError("unknown graph selection")
     if corpus not in (None, "all", "vault", "memory"):
         raise ValueError("unknown corpus selection")
-    texts, named = list(texts), [relative_name(value) for value in named]
-    if not texts and not named:
-        raise ValueError("supply at least one --named path or --text facet")
+    texts = list(texts)
+    names, paths = [relative_name(value) for value in names], [markdown_path(value) for value in paths]
+    if not (texts or names or paths):
+        raise ValueError("supply at least one --name, --path, or --text")
     if any(not isinstance(text, str) or not text.strip() for text in texts):
         raise ValueError("every text facet must be nonempty")
     supplied_vault = Path(os.path.abspath(Path(vault).expanduser()))
@@ -124,7 +144,6 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         return source
 
     named_channel, candidates = [], {}
-    cli = None
 
     def nominate_path(value, reason):
         source = observe(value)
@@ -134,20 +153,16 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         entry["reasons"].append(reason)
         return source["note"]
 
-    for value in named:
-        if is_exact_path(value):
-            note = nominate_path(value, {"channel": "named", "requested": value,
-                                         "matched_by": ["path"],
-                                         "ambient_exemptions": "not-applied-to-explicit-nomination"})
-            found = [{"note": note, "matched_by": ["path"]}] if note else []
-            named_channel.append({"requested": value,
-                                  "status": "matched" if note else "unavailable",
-                                  "candidates": found})
-            continue
-        # A bare name: every note it can mean, never Obsidian's silent pick.
-        if cli is None:
-            from obsidian_cli import ObsidianCLI
-            cli = ObsidianCLI(vault, timeout=20)
+    for value in paths:
+        note = nominate_path(value, {"channel": "path", "requested": value})
+        named_channel.append({"requested": value, "kind": "path",
+                              "status": "matched" if note else "unavailable",
+                              "candidates": [{"note": note}] if note else []})
+
+    if names:
+        from obsidian_cli import ObsidianCLI
+        cli = ObsidianCLI(vault, timeout=20)
+    for value in names:
         resolved = cli.name_candidates(value)
         if resolved["status"] in ("unavailable", "error", "wrong-vault"):
             errors.append({"named": value, "status": resolved["status"],
@@ -155,16 +170,14 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         found = []
         for item in resolved["candidates"]:
             note = nominate_path(item["note"], {
-                "channel": "named", "requested": value,
-                "matched_by": item["matched_by"],
-                "name_status": resolved["status"],
-                "ambient_exemptions": "not-applied-to-explicit-nomination"})
+                "channel": "name", "requested": value})
             if note:
-                found.append({"note": note, "matched_by": item["matched_by"],
-                              "obsidian_choice": item["obsidian_choice"]})
-        named_channel.append({"requested": value, "status": resolved["status"],
-                              "obsidian_choice": resolved.get("obsidian_choice"),
-                              "candidates": found})
+                found.append({**item, "note": note})
+        entry = {"requested": value, "kind": "name", "status": resolved["status"],
+                 "candidates": found}
+        if len(found) != len(resolved["candidates"]):
+            entry.update(status="partial", provider_status=resolved["status"])
+        named_channel.append(entry)
     ambiguous = sorted({item["note"] for entry in named_channel
                         if entry["status"] == "ambiguous"
                         for item in entry["candidates"]})
@@ -188,40 +201,11 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
                        "graph": {"provider": "unobserved", "status": "unavailable"}}
                       for number, text in enumerate(texts, 1)]
         else:
-            index_header, refresh = batch["header"], batch["refresh"]
+            index_header, refresh = dict(batch["header"]), batch["refresh"]
             for number, (text, result) in enumerate(zip(texts, batch["queries"]), 1):
-                accepted, rejected = [], []
                 for hit in result["results"]:
-                    source = observe(hit["note"])
-                    if source.get("observation_status") != "current":
-                        rejected.append({"note": hit["note"], "status": "unavailable"})
-                        continue
-                    accepted.append(hit)
-                    nominate_path(hit["note"], {"channel": "ranked", "query_index": number,
-                                               "text": text, "evidence": dict(hit)})
-                safe_result = {**result, "results": accepted,
-                               "query_index": number, "text": text}
-                if rejected:
-                    rejected_paths = {item["note"] for item in rejected}
-                    graph_result = result["graph"]
-                    safe_result["graph"] = {
-                        **graph_result, "status": "partial",
-                        "notes": [item for item in graph_result.get("notes", [])
-                                  if item.get("path") not in rejected_paths],
-                    }
-                    safe_result["rejected_sources"] = rejected
-                ranked.append(safe_result)
-
-    # An ambiguous name is ordered by each question, not by Obsidian's rule.
-    for entry in named_channel:
-        if entry["status"] != "ambiguous" or not ranked:
-            continue
-        mine ={item["note"] for item in entry["candidates"]}
-        entry["ranking_by_facet"] = [
-            {"query_index": query["query_index"], "text": query["text"],
-             "ranking": [item for item in query.get("candidate_ranking", [])
-                         if item["note"] in mine]}
-            for query in ranked if "candidate_ranking" in query]
+                    nominate_path(hit["note"], {"channel": "ranked", "query_index": number})
+                ranked.append({**result, "query_index": number, "text": text})
 
     # Check precisely the revision retained in each output record. A later
     # observation through another spelling must not certify an older preview.
@@ -232,16 +216,26 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         entry["observation_status"] = check["status"]
         if check["status"] != "current":
             errors.append({"note": entry["note"], **check})
+    for entry in named_channel:
+        if any(candidates[item["note"]]["observation_status"] != "current"
+               for item in entry["candidates"]):
+            entry.setdefault("provider_status", entry["status"])
+            entry["status"] = "partial"
+    if index_header is not None:
+        revisions = index_header.pop("source_sha256", {})
+        for facet in ranked:
+            rejected = verify_ranking(facet, observations, candidates, revisions)
+            errors.extend({"channel": "ranked", "query_index": facet["query_index"], **hit}
+                          for hit in rejected)
     limits = [
         "Nominations do not establish relevance, current priorities, or exhaustive coverage.",
-        "Previews are bounded nomination evidence; give selected original paths to role_harness packet.",
-        "Graph links and backlinks remain bounded provider evidence, not automatically selected sources.",
+        "Source identity is SHA-256 of the raw file. Declared fields are top-level text; authorship and adoption are not interpreted.",
+        "Previews normalize newlines and omit frontmatter; give selected original paths to role_harness packet.",
+        "Ranked excerpts and scores require the indexed revision to match the source read.",
     ]
     if any(entry["status"] == "ambiguous" for entry in named_channel):
-        limits.append("An ambiguous name stays unresolved: each candidate is nominated, "
-                      "obsidian_choice only records Obsidian's wikilink rule, and a write "
-                      "needs an exact path." + ("" if texts else
-                      " Add --text to order the candidates by the question."))
+        limits.append("Ambiguous names retain their candidate paths. A question facet can rank "
+                      "those paths for reading; a write needs an exact path.")
     if texts and not refresh_index:
         limits.append("Ambient retrieval used the existing index without refreshing it.")
     graph_partial = any(query["graph"].get("status") not in ("ok", "disabled")
@@ -251,7 +245,7 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
     result = provider_result(
         "vault-context-query", "nominate",
         "partial" if errors or graph_partial or missing_nominations else "complete",
-        scope={"vault": str(vault), "named": named, "text_facets": texts,
+        scope={"vault": str(vault), "names": names, "paths": paths, "text_facets": texts,
                "ambient": {"enabled": bool(texts), "k_per_facet": k,
                            "rank": rank, "corpus": corpus or "all", "graph": graph},
                "unobserved": limits},
@@ -273,12 +267,13 @@ def arguments(argv=None):
     add_vault_argument(command)
     command.add_argument("--text", action="append", default=[],
                          help="text facet for neighbour retrieval (repeatable)")
-    command.add_argument("--named", action="append", default=[],
-                         help="exact vault-relative Markdown path, or a note name "
-                              "resolved to every note it can mean (repeatable)")
+    command.add_argument("--name", action="append", default=[],
+                         help="note name or alias, with or without .md (repeatable)")
+    command.add_argument("--path", action="append", default=[],
+                         help="exact vault-relative Markdown path (repeatable)")
     command.add_argument("--k", type=int, default=10)
     command.add_argument("--graph", choices=("configured", "obsidian", "filesystem", "none"),
-                         default="configured", help="graph expansion for ranked text facets")
+                         default="none", help="optional graph expansion for ranked text facets")
     command.add_argument("--corpus", choices=("memory", "vault", "all"),
                          help="scope for ranked text facets")
     command.add_argument("--rank", choices=("both", "embedding", "lexical"), default="both")
@@ -291,7 +286,7 @@ def arguments(argv=None):
 def main(argv=None):
     args = arguments(argv)
     try:
-        result = nominate(args.vault, texts=args.text, named=args.named, k=args.k,
+        result = nominate(args.vault, texts=args.text, names=args.name, paths=args.path, k=args.k,
                           graph=args.graph, corpus=args.corpus, rank=args.rank,
                           refresh_index=not args.no_refresh, max_bytes=args.max_bytes)
         if args.out:

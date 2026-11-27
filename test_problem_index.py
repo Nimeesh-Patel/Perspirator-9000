@@ -116,9 +116,9 @@ class RootProblemIndexTests(unittest.TestCase):
             records = {r["name"]: r for r in root_problem_records(vault)}
 
         self.assertEqual(records["Challenged"]["criticisms"], ["objection#Scope", "Elsewhere"])
-        self.assertEqual(records["Objection"]["criticised_by"], ["Challenged", "Second"])
-        self.assertEqual(records["Challenged"]["criticised_by"], ["Objection"])
-        self.assertEqual(records["Second"]["criticised_by"], [])
+        self.assertEqual(records["Objection"]["criticises"], ["Challenged.md", "Second.md"])
+        self.assertEqual(records["Challenged"]["criticises"], ["Objection.md"])
+        self.assertEqual(records["Second"]["criticises"], [])
         self.assertEqual(records["Malformed"]["criticisms"], [])
         self.assertIn("must be links", records["Malformed"]["criticisms_error"])
 

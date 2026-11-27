@@ -33,7 +33,7 @@ Output (JSON array), one object per problem note:
       "up":       ["<parent note name>", ...],   # [[..]] under up:
       "criticisms": ["<link target>", ...],  # notes holding open objections to this one
       "criticisms_error": "<why criticisms: is unusable, or null>",
-      "criticised_by": ["<note name>", ...], # root notes listing this one in criticisms:
+      "criticises": ["<root note.md>", ...], # claims listing this objection
       "criticism_resolution": [{"target": "<authored target>", "path": "<resolved path or null>", "status": "<resolution status>"}],
       "links":    ["<outbound link target>", ...], # unique, whole body
       "stub":     true|false   # true if the conjecture side is empty
@@ -88,7 +88,7 @@ def index_note(path: Path, vault_root: Path):
         "up": up,
         "criticisms": criticisms,
         "criticisms_error": criticisms_error,
-        "criticised_by": [],
+        "criticises": [],
         "links": extract_links(text),
         "stub": parsed["conjecture"] == "",
     }
@@ -116,9 +116,9 @@ def root_problem_records(vault_root):
             resolved = targets.get(link_key(target))
             rec["criticism_resolution"].append({"target": target, "path": resolved,
                 "status": "resolved" if resolved else "unresolved-or-ambiguous"})
-            challenged = by_path.get(link_key(resolved)) if resolved else None
-            if challenged is not None and rec["name"] not in challenged["criticised_by"]:
-                challenged["criticised_by"].append(rec["name"])
+            objection = by_path.get(link_key(resolved)) if resolved else None
+            if objection is not None and rec["path"] not in objection["criticises"]:
+                objection["criticises"].append(rec["path"])
     return records
 
 

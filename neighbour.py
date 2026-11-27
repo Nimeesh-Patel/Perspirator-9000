@@ -374,7 +374,7 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
     import numpy as np
 
     stamps = note_stamps(vault, config)
-    known_vectors, old_meta, old_stamps, old_ids = {}, [], {}, []
+    known_vectors, old_meta, old_stamps, old_ids, revisions = {}, [], {}, [], {}
     if out.is_file() and not rebuild:
         with np.load(out, allow_pickle=False) as old:
             header = json.loads(str(old["header"]))
@@ -387,21 +387,30 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
                 raise SystemExit(
                     f"STOP: {out} was built for a different retrieval-unit shape; "
                     "re-run `index --rebuild`.")
-            old_meta = json.loads(str(old["meta"]))
             old_stamps = header.get("notes", {})
+            revisions = header.get("source_sha256", {})
+            if stamps == old_stamps and revisions.keys() >= stamps.keys():
+                count = header["units"]
+                return {"chunks": count, "units": count, "embedded": 0, "reused": count,
+                        "notes_changed": 0, "notes_removed": 0, "seconds": 0.0, "path": out}
+            old_meta = json.loads(str(old["meta"]))
             old_ids = json.loads(str(old["ids"]))
             for cid, vector in zip(old_ids, old["vectors"]):
                 known_vectors[cid] = vector.copy()
 
-    changed = {rel for rel, stamp in stamps.items() if old_stamps.get(rel) != stamp}
+    changed = {rel for rel, stamp in stamps.items()
+               if old_stamps.get(rel) != stamp or rel not in revisions}
     removed = set(old_stamps) - set(stamps)
     chunks = [m for m in old_meta if m["note"] not in changed and m["note"] not in removed]
 
     if changed:
         embedder = embedder or Embedder(config["model"], config["formation"]["max-tokens"])
         for rel in sorted(changed):
+            raw = (vault / rel).read_bytes()
+            text = raw.decode("utf-8-sig")
+            revisions[rel] = hashlib.sha256(raw).hexdigest()
             for chunk in chunks_for_note(
-                    vault / rel, vault,
+                    vault / rel, vault, text=text,
                     max_tokens=config["formation"]["max-tokens"],
                     token_length=embedder.token_length):
                 if keep_chunk(chunk, config):
@@ -432,6 +441,7 @@ def refresh(vault, config, out, rebuild=False, embedder=None):
             "model": config["model"], "shape": config["shape"],
             "dim": int(matrix.shape[1]) if len(matrix) else 0,
             "chunks": len(ids), "units": len(ids), "notes": stamps,
+            "source_sha256": {rel: revisions[rel] for rel in stamps},
             "built": time.strftime("%Y-%m-%d %H:%M"),
         }))
     return {"chunks": len(ids), "units": len(ids), "embedded": len(missing),
@@ -682,42 +692,20 @@ def match_query(vault, config, meta, vectors, query, query_vector,
     out = {"query_note": source_note, "results": results, "graph": graph,
            "distribution": score_distribution(scores, eligible)}
     if query.get("candidates"):
-        out["candidate_ranking"] = rank_candidates(
-            query["text"], query["candidates"], meta, scores)
+        out["candidate_ranking"] = rank_candidates(query["candidates"], meta, scores)
     return out
 
 
-def rank_candidates(text, paths, meta, cosine):
-    """Order notes a caller already named by their nearness to the question.
-
-    For an ambiguous name, the question rather than Obsidian's path rule should
-    say which note is meant. Each candidate keeps its best unit by meaning and
-    its rare-word coverage separately, as the two rankers do elsewhere; the
-    order follows meaning, and a candidate absent from the index says so
-    instead of sinking silently to the bottom.
-    """
-    wanted = {str(path).casefold(): path for path in paths}
-    units = {}
-    for index, unit in enumerate(meta):
-        key = unit["note"].casefold()
-        if key in wanted:
-            units.setdefault(key, []).append(index)
-    lexical = lexical_scores(text, meta, [i for group in units.values() for i in group], cosine)
-    ranked, missing = [], []
-    for key, path in wanted.items():
-        group = units.get(key)
-        if not group:
-            missing.append({"note": path, "status": "not-indexed"})
-            continue
-        best = max(group, key=lambda i: cosine[i])
-        ranked.append({"note": path, "score": round(float(cosine[best]), 2),
-                       "lexical_score": round(max(float(lexical[i]) for i in group), 2),
-                       "best_unit": meta[best]["unit"], "side": meta[best]["side"],
-                       "snippet": snippet(meta[best]["text"])})
-    ranked.sort(key=lambda item: -item["score"])
-    for position, item in enumerate(ranked, 1):
-        item["rank"] = position
-    return ranked + missing
+def rank_candidates(paths, meta, scores):
+    """Reuse the same best-unit ranking on the named shortlist."""
+    wanted = set(paths)
+    eligible = [i for i, unit in enumerate(meta) if unit["note"] in wanted]
+    best = collapse_by_note(eligible, meta, scores, len(wanted))
+    ranked = [{"note": meta[i]["note"],
+               "score": round(float(scores[i]), 2), "rank": rank}
+              for rank, i in enumerate(best, 1)]
+    missing = wanted - {hit["note"] for hit in ranked}
+    return ranked + [{"note": path, "status": "not-indexed"} for path in sorted(missing)]
 
 
 _IDF_CACHE = {}
@@ -889,6 +877,10 @@ def match_batch(vault, queries, *, index=None, refresh_index=True,
                            args, get_refs, cli=cli)
                for query, vector in zip(queries, query_vectors)]
     result_header = public_header(header)
+    revisions = header.get("source_sha256", {})
+    result_header["source_sha256"] = {hit["note"]: revisions.get(hit["note"])
+        for match in matches for key in ("results", "candidate_ranking")
+        for hit in match.get(key, [])}
     result_header["freshness"] = match_freshness(
         vault, header, matches, refresh_index)
     refresh_report = loaded["stale"]

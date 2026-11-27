@@ -145,17 +145,9 @@ class ObsidianCLI:
         return self._run(argv)
 
     def name_candidates(self, name):
-        """Every note a bare name can mean, with Obsidian's own pick labelled.
-
-        ``file=<name>`` resolves like a wikilink and returns one file without
-        saying that another note shares the name (``Interest`` gives the root
-        ``interest.md`` and hides ``memory/Thales/Interest.md``). Identity must
-        not depend on that silent rule, so this lists every Markdown file whose
-        name (or folder/name) matches case-insensitively, and every note that
-        declares the name as an alias. More than one candidate is
-        ``ambiguous``; choosing among them is left to the caller.
-        """
+        """Find every matching Markdown name or alias in Obsidian's listings."""
         wanted = str(name).strip().replace("\\", "/")
+        literal_alias = wanted.casefold()
         if wanted.lower().endswith(".md"):
             wanted = wanted[:-3]
         if not wanted:
@@ -164,8 +156,7 @@ class ObsidianCLI:
         probe = self.probe()
         if not probe["ok"]:
             return {"provider": "obsidian", "status": probe["status"],
-                    "requested": name, "error": probe["error"],
-                    "candidates": [], "obsidian_choice": None}
+                    "error": probe["error"], "candidates": []}
         base = [self.executable, f"vault={self.vault_name}"]
         # One listing serves every name in a run, as note context is cached.
         if self._name_index is None or not all(r["ok"] for r in self._name_index):
@@ -175,8 +166,7 @@ class ObsidianCLI:
         failed = next((r for r in (files, aliases) if not r["ok"]), None)
         if failed:
             return {"provider": "obsidian", "status": failed["status"],
-                    "requested": name, "error": failed["error"],
-                    "candidates": [], "obsidian_choice": None}
+                    "error": failed["error"], "candidates": []}
         found = {}
         for path in files["data"]:
             stem_path = str(path)[:-3] if str(path).lower().endswith(".md") else str(path)
@@ -186,23 +176,13 @@ class ObsidianCLI:
                 found.setdefault(str(path), []).append("name")
         for line in aliases["data"]:
             alias, _, path = str(line).partition("\t")
-            if path.strip() and alias.strip().casefold() == key:
+            if path.strip() and alias.strip().casefold() in {key, literal_alias}:
                 found.setdefault(path.strip(), []).append("alias")
-        # Obsidian's own choice, for the record; a missing name is an error
-        # line, which here only means there is no choice to report.
-        choice = self._run([*base, "file", f"file={wanted}"])
-        chosen = None
-        for line in choice["data"] if choice["ok"] else []:
-            field, _, value = str(line).partition("\t")
-            if field.strip() == "path":
-                chosen = value.strip()
-        candidates = [{"note": path, "matched_by": matched,
-                       "obsidian_choice": path == chosen}
+        candidates = [{"note": path, "matched_by": matched}
                       for path, matched in sorted(found.items())]
         status = ("unresolved" if not candidates
                   else "matched" if len(candidates) == 1 else "ambiguous")
-        return {"provider": "obsidian", "status": status, "requested": name,
-                "candidates": candidates, "obsidian_choice": chosen}
+        return {"provider": "obsidian", "status": status, "candidates": candidates}
 
     def note_context(self, path):
         """Links and backlinks for an exact note path."""
