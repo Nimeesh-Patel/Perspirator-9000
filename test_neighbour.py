@@ -662,5 +662,58 @@ class MatchFreshnessTests(unittest.TestCase):
         self.assertEqual(facts["missing_paths"], [])
 
 
+class NameCandidateTests(unittest.TestCase):
+    def runner(self, outputs):
+        from types import SimpleNamespace
+
+        def run(argv, **kwargs):
+            command = argv[2]
+            return SimpleNamespace(stdout=outputs[command], stderr="", returncode=0)
+        return run
+
+    def test_every_note_a_name_can_mean_is_listed_with_obsidians_pick(self):
+        import obsidian_cli
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp).resolve()
+            cli = obsidian_cli.ObsidianCLI(vault, executable="obsidian", runner=self.runner({
+                "vault": str(vault) + "\n",
+                "files": "interest.md\nmemory/Thales/Interest.md\nPinterest.md\n",
+                "aliases": "interest\tWhat is interest.md\nother\tx.md\n",
+                "file": "path\tinterest.md\nname\tinterest\n"}))
+            result = cli.name_candidates("Interest")
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["obsidian_choice"], "interest.md")
+        self.assertEqual([(c["note"], c["matched_by"], c["obsidian_choice"])
+                          for c in result["candidates"]],
+                         [("What is interest.md", ["alias"], False),
+                          ("interest.md", ["name"], True),
+                          ("memory/Thales/Interest.md", ["name"], False)])
+
+    def test_a_missing_name_is_unresolved_not_an_error(self):
+        import obsidian_cli
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp).resolve()
+            cli = obsidian_cli.ObsidianCLI(vault, executable="obsidian", runner=self.runner({
+                "vault": str(vault) + "\n", "files": "a.md\n", "aliases": "",
+                "file": 'Error: File "Nope" not found.\n'}))
+            result = cli.name_candidates("Nope")
+        self.assertEqual((result["status"], result["candidates"], result["obsidian_choice"]),
+                         ("unresolved", [], None))
+
+    def test_candidates_are_ordered_by_meaning_and_unindexed_ones_say_so(self):
+        import numpy as np
+        meta = [{"note": "a.md", "unit": "problem_identity", "side": "problem", "text": "cards sync"},
+                {"note": "a.md", "unit": "conjecture", "side": "answer", "text": "anki projection"},
+                {"note": "b.md", "unit": "conjecture", "side": "answer", "text": "fun and interest"}]
+        cosine = np.array([0.1, 0.7, 0.4])
+        ranked = nb.rank_candidates("anki cards", ["b.md", "a.md", "c.md"], meta, cosine)
+        self.assertEqual([(item["note"], item.get("rank")) for item in ranked],
+                         [("a.md", 1), ("b.md", 2), ("c.md", None)])
+        self.assertEqual(ranked[0]["best_unit"], "conjecture")
+        self.assertGreater(ranked[0]["lexical_score"], 0)
+        self.assertEqual(ranked[2]["status"], "not-indexed")
+
+
+
 if __name__ == "__main__":
     unittest.main()

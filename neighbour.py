@@ -679,8 +679,45 @@ def match_query(vault, config, meta, vectors, query, query_vector,
             "snippet": snippet(unit["text"]),
         })
     graph = expand_graph(vault, results, config, args.graph, get_refs, cli=cli)
-    return {"query_note": source_note, "results": results, "graph": graph,
-            "distribution": score_distribution(scores, eligible)}
+    out = {"query_note": source_note, "results": results, "graph": graph,
+           "distribution": score_distribution(scores, eligible)}
+    if query.get("candidates"):
+        out["candidate_ranking"] = rank_candidates(
+            query["text"], query["candidates"], meta, scores)
+    return out
+
+
+def rank_candidates(text, paths, meta, cosine):
+    """Order notes a caller already named by their nearness to the question.
+
+    For an ambiguous name, the question rather than Obsidian's path rule should
+    say which note is meant. Each candidate keeps its best unit by meaning and
+    its rare-word coverage separately, as the two rankers do elsewhere; the
+    order follows meaning, and a candidate absent from the index says so
+    instead of sinking silently to the bottom.
+    """
+    wanted = {str(path).casefold(): path for path in paths}
+    units = {}
+    for index, unit in enumerate(meta):
+        key = unit["note"].casefold()
+        if key in wanted:
+            units.setdefault(key, []).append(index)
+    lexical = lexical_scores(text, meta, [i for group in units.values() for i in group], cosine)
+    ranked, missing = [], []
+    for key, path in wanted.items():
+        group = units.get(key)
+        if not group:
+            missing.append({"note": path, "status": "not-indexed"})
+            continue
+        best = max(group, key=lambda i: cosine[i])
+        ranked.append({"note": path, "score": round(float(cosine[best]), 2),
+                       "lexical_score": round(max(float(lexical[i]) for i in group), 2),
+                       "best_unit": meta[best]["unit"], "side": meta[best]["side"],
+                       "snippet": snippet(meta[best]["text"])})
+    ranked.sort(key=lambda item: -item["score"])
+    for position, item in enumerate(ranked, 1):
+        item["rank"] = position
+    return ranked + missing
 
 
 _IDF_CACHE = {}

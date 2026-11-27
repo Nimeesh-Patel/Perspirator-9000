@@ -19,21 +19,27 @@ from problem_half import parse_note
 from role_harness import canonical, exact_path, freshness, reparse, snapshot
 
 
-VERSION = 2
+VERSION = 3
 PREVIEW_CHARS = 220
 
 
 def relative_name(value):
-    """Validate the shape of a vault-relative Markdown path."""
+    """Validate a vault-relative Markdown path, or a bare note name.
+
+    A value ending in ``.md`` is an exact path. Anything else is a name, which
+    is resolved to every note it can mean rather than to Obsidian's one pick.
+    """
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ValueError("named note must be nonempty text")
     value = value.strip().replace("\\", "/")
     path = PurePosixPath(value)
     if path.is_absolute() or PureWindowsPath(value).drive or ".." in path.parts:
         raise ValueError(f"named note must stay inside the vault: {value}")
-    if path.suffix.lower() != ".md":
-        raise ValueError(f"expected an exact vault-relative Markdown path: {value}")
     return path.as_posix()
+
+
+def is_exact_path(value):
+    return value.lower().endswith(".md")
 
 
 def note_observation(vault, value):
@@ -118,6 +124,7 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         return source
 
     named_channel, candidates = [], {}
+    cli = None
 
     def nominate_path(value, reason):
         source = observe(value)
@@ -128,19 +135,47 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         return source["note"]
 
     for value in named:
-        note = nominate_path(value, {"channel": "named", "requested": value,
-                                     "matched_by": ["path"],
-                                     "ambient_exemptions": "not-applied-to-explicit-nomination"})
-        found = [{"note": note, "matched_by": ["path"]}] if note else []
-        named_channel.append({"requested": value, "status": "matched" if note else "unavailable",
+        if is_exact_path(value):
+            note = nominate_path(value, {"channel": "named", "requested": value,
+                                         "matched_by": ["path"],
+                                         "ambient_exemptions": "not-applied-to-explicit-nomination"})
+            found = [{"note": note, "matched_by": ["path"]}] if note else []
+            named_channel.append({"requested": value,
+                                  "status": "matched" if note else "unavailable",
+                                  "candidates": found})
+            continue
+        # A bare name: every note it can mean, never Obsidian's silent pick.
+        if cli is None:
+            from obsidian_cli import ObsidianCLI
+            cli = ObsidianCLI(vault, timeout=20)
+        resolved = cli.name_candidates(value)
+        if resolved["status"] in ("unavailable", "error", "wrong-vault"):
+            errors.append({"named": value, "status": resolved["status"],
+                           "error": resolved.get("error")})
+        found = []
+        for item in resolved["candidates"]:
+            note = nominate_path(item["note"], {
+                "channel": "named", "requested": value,
+                "matched_by": item["matched_by"],
+                "name_status": resolved["status"],
+                "ambient_exemptions": "not-applied-to-explicit-nomination"})
+            if note:
+                found.append({"note": note, "matched_by": item["matched_by"],
+                              "obsidian_choice": item["obsidian_choice"]})
+        named_channel.append({"requested": value, "status": resolved["status"],
+                              "obsidian_choice": resolved.get("obsidian_choice"),
                               "candidates": found})
+    ambiguous = sorted({item["note"] for entry in named_channel
+                        if entry["status"] == "ambiguous"
+                        for item in entry["candidates"]})
 
     ranked, index_header, refresh = [], None, None
     if texts:
         # Keep exact source intake independent of neighbour dependencies.
         try:
             from neighbour import match_batch
-            batch = match_batch(str(vault), [{"text": text, "note": None, "file": None}
+            batch = match_batch(str(vault), [{"text": text, "note": None, "file": None,
+                                              "candidates": ambiguous}
                                              for text in texts], k=k, graph=graph,
                                 corpus=corpus, rank=rank, refresh_index=refresh_index)
             if len(batch["queries"]) != len(texts):
@@ -177,6 +212,17 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
                     safe_result["rejected_sources"] = rejected
                 ranked.append(safe_result)
 
+    # An ambiguous name is ordered by each question, not by Obsidian's rule.
+    for entry in named_channel:
+        if entry["status"] != "ambiguous" or not ranked:
+            continue
+        mine ={item["note"] for item in entry["candidates"]}
+        entry["ranking_by_facet"] = [
+            {"query_index": query["query_index"], "text": query["text"],
+             "ranking": [item for item in query.get("candidate_ranking", [])
+                         if item["note"] in mine]}
+            for query in ranked if "candidate_ranking" in query]
+
     # Check precisely the revision retained in each output record. A later
     # observation through another spelling must not certify an older preview.
     current = freshness([{"id": entry["note"], "path": entry["path"],
@@ -191,6 +237,11 @@ def nominate(vault, *, texts=(), named=(), k=10, graph="configured", corpus=None
         "Previews are bounded nomination evidence; give selected original paths to role_harness packet.",
         "Graph links and backlinks remain bounded provider evidence, not automatically selected sources.",
     ]
+    if any(entry["status"] == "ambiguous" for entry in named_channel):
+        limits.append("An ambiguous name stays unresolved: each candidate is nominated, "
+                      "obsidian_choice only records Obsidian's wikilink rule, and a write "
+                      "needs an exact path." + ("" if texts else
+                      " Add --text to order the candidates by the question."))
     if texts and not refresh_index:
         limits.append("Ambient retrieval used the existing index without refreshing it.")
     graph_partial = any(query["graph"].get("status") not in ("ok", "disabled")
@@ -223,7 +274,8 @@ def arguments(argv=None):
     command.add_argument("--text", action="append", default=[],
                          help="text facet for neighbour retrieval (repeatable)")
     command.add_argument("--named", action="append", default=[],
-                         help="exact vault-relative Markdown path (repeatable)")
+                         help="exact vault-relative Markdown path, or a note name "
+                              "resolved to every note it can mean (repeatable)")
     command.add_argument("--k", type=int, default=10)
     command.add_argument("--graph", choices=("configured", "obsidian", "filesystem", "none"),
                          default="configured", help="graph expansion for ranked text facets")

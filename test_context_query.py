@@ -43,10 +43,57 @@ class ContextQueryTests(unittest.TestCase):
                          ["nested/Two.md", "missing.md"])
         self.assertIsNone(result["freshness"]["index"])
 
-    def test_named_source_requires_a_markdown_path(self):
-        for title in ("One", "Shared title"):
-            with self.subTest(title=title), self.assertRaisesRegex(ValueError, "exact.*Markdown path"):
-                self.nominate(named=[title])
+    def ambiguous_name(self, name):
+        return {"provider": "obsidian", "status": "ambiguous", "requested": name,
+                "obsidian_choice": "One.md",
+                "candidates": [{"note": "One.md", "matched_by": ["name"], "obsidian_choice": True},
+                               {"note": "nested/Two.md", "matched_by": ["alias"],
+                                "obsidian_choice": False}]}
+
+    def test_a_bare_name_nominates_every_note_it_can_mean(self):
+        import obsidian_cli
+        with patch.object(obsidian_cli.ObsidianCLI, "name_candidates",
+                          side_effect=self.ambiguous_name), \
+                patch.object(nb, "match_batch", side_effect=AssertionError("ranker loaded")):
+            result = self.nominate(named=["One"])
+        entry = result["channels"]["named"][0]
+        self.assertEqual(entry["status"], "ambiguous")
+        self.assertEqual(entry["obsidian_choice"], "One.md")
+        self.assertEqual(sorted(item["note"] for item in result["records"]),
+                         ["One.md", "nested/Two.md"])
+        self.assertNotIn("ranking_by_facet", entry)
+        self.assertTrue(any("ambiguous name stays unresolved" in limit and "--text" in limit
+                            for limit in result["scope"]["unobserved"]))
+
+    def test_the_question_orders_an_ambiguous_name(self):
+        import obsidian_cli
+        seen = {}
+
+        def batch(vault, queries, **kwargs):
+            seen["candidates"] = [query["candidates"] for query in queries]
+            return {"header": {"freshness": {}}, "refresh": None, "queries": [{
+                "results": [], "graph": {"provider": "none", "status": "disabled", "notes": []},
+                "candidate_ranking": [
+                    {"note": "nested/Two.md", "score": 0.8, "rank": 1},
+                    {"note": "One.md", "score": 0.2, "rank": 2}]}]}
+
+        with patch.object(obsidian_cli.ObsidianCLI, "name_candidates",
+                          side_effect=self.ambiguous_name), \
+                patch.object(nb, "match_batch", side_effect=batch):
+            result = self.nominate(named=["One"], texts=["a different answer"])
+        self.assertEqual(seen["candidates"], [["One.md", "nested/Two.md"]])
+        ranking = result["channels"]["named"][0]["ranking_by_facet"][0]["ranking"]
+        self.assertEqual([item["note"] for item in ranking], ["nested/Two.md", "One.md"])
+
+    def test_an_unavailable_app_keeps_exact_paths_and_reports_the_name(self):
+        import obsidian_cli
+        down = {"provider": "obsidian", "status": "unavailable", "requested": "One",
+                "error": "app closed", "candidates": [], "obsidian_choice": None}
+        with patch.object(obsidian_cli.ObsidianCLI, "name_candidates", return_value=down):
+            result = self.nominate(named=["One", "nested/Two.md"])
+        self.assertEqual([entry["status"] for entry in result["channels"]["named"]],
+                         ["unavailable", "matched"])
+        self.assertEqual(result["status"], "partial")
 
     def test_explicit_paths_can_name_ambient_exempt_artifacts(self):
         self.write(".perspirator/Explicit.md", "Preserved exact artifact.\n")
