@@ -32,55 +32,21 @@ class ContextQueryTests(unittest.TestCase):
     def nominate(self, **kwargs):
         return cq.nominate(self.vault, max_bytes=1000000, **kwargs)
 
-    def test_named_only_resolves_exact_stem_title_and_preserves_ambiguity_without_model(self):
-        with patch.object(nb, "match_batch", side_effect=AssertionError("ranker loaded")):
-            result = self.nominate(named=["One", "Shared title", "nested/Two.md", "missing"])
+    def test_named_paths_open_only_the_supplied_originals_without_the_model(self):
+        with patch.object(nb, "match_batch", side_effect=AssertionError("ranker loaded")), \
+                patch.object(cq, "note_observation", wraps=cq.note_observation) as observe:
+            result = self.nominate(named=["nested/Two.md", "missing.md"])
         named = result["channels"]["named"]
-        self.assertEqual([entry["status"] for entry in named],
-                         ["matched", "ambiguous", "matched", "unresolved"])
-        self.assertCountEqual([entry["note"] for entry in named[1]["candidates"]],
-                              ["One.md", "nested/Two.md"])
-        self.assertEqual(len(result["records"]), 2)
-        self.assertEqual(len(result["records"][0]["reasons"]), 2)
-        self.assertIsNone(result["freshness"]["index"])
-        self.assertTrue(any("alias" in value for value in result["scope"]["unobserved"]))
-
-    def test_native_search_keeps_query_order_limit_and_original_identity(self):
-        queries = ['path:nested "answer"', '"nothing here"']
-        provider = [
-            {"ok": True, "data": ["nested/Two.md", "One.md", "third.md"]},
-            {"ok": True, "data": []},
-        ]
-        with patch.object(cq, "ObsidianCLI") as cli, \
-                patch.object(nb, "match_batch", side_effect=AssertionError("ranker loaded")):
-            cli.return_value.search.side_effect = provider
-            result = self.nominate(searches=queries, named=["One.md"], k=2)
-        cli.assert_called_once_with(self.vault, limit=2)
-        self.assertEqual([call.args[0] for call in cli.return_value.search.call_args_list], queries)
-        first, empty = result["channels"]["native_search"]
-        self.assertEqual(first["candidates"], [{"note": "nested/Two.md", "position": 1},
-                                              {"note": "One.md", "position": 2}])
-        self.assertEqual(first["omitted_after_limit"], 1)
-        self.assertEqual(empty["status"], "complete")
-        self.assertEqual(empty["candidates"], [])
-        record = next(record for record in result["records"] if record["note"] == "One.md")
-        self.assertEqual([reason["channel"] for reason in record["reasons"]],
-                         ["named", "native_search"])
+        self.assertEqual([entry["status"] for entry in named], ["matched", "unavailable"])
+        self.assertEqual([item["note"] for item in result["records"]], ["nested/Two.md"])
+        self.assertEqual([call.args[1] for call in observe.call_args_list],
+                         ["nested/Two.md", "missing.md"])
         self.assertIsNone(result["freshness"]["index"])
 
-    def test_native_search_failure_or_stale_hit_preserves_independent_evidence(self):
-        with patch.object(cq, "ObsidianCLI") as cli:
-            cli.return_value.search.side_effect = [
-                {"ok": False, "status": "wrong-vault", "error": "different vault", "data": []},
-                {"ok": True, "data": ["missing.md", "../outside.md", "nested/Two.md"]},
-            ]
-            result = self.nominate(searches=["first", "second"], named=["One.md"])
-        failed, partial = result["channels"]["native_search"]
-        self.assertEqual((result["status"], failed["status"], partial["status"]),
-                         ("partial", "wrong-vault", "partial"))
-        self.assertEqual(partial["candidates"], [{"note": "nested/Two.md", "position": 3}])
-        self.assertEqual([record["note"] for record in result["records"]],
-                         ["One.md", "nested/Two.md"])
+    def test_named_source_requires_a_markdown_path(self):
+        for title in ("One", "Shared title"):
+            with self.subTest(title=title), self.assertRaisesRegex(ValueError, "exact.*Markdown path"):
+                self.nominate(named=[title])
 
     def test_explicit_paths_can_name_ambient_exempt_artifacts(self):
         self.write(".perspirator/Explicit.md", "Preserved exact artifact.\n")
@@ -89,7 +55,6 @@ class ContextQueryTests(unittest.TestCase):
         self.assertEqual(source["note"], ".perspirator/Explicit.md")
         self.assertEqual(source["reasons"][0]["ambient_exemptions"],
                          "not-applied-to-explicit-nomination")
-        self.assertEqual(result["scope"]["name_scan"]["notes_observed"], 0)
 
     def test_raw_source_hash_and_normalized_problem_preview_are_distinct(self):
         path = self.write("Raw.md", "\ufeff---\r\ntitle: Raw source\r\n---\r\nWhy £?\r\n***\r\nOriginal conjecture.\r\n")
@@ -161,13 +126,12 @@ class ContextQueryTests(unittest.TestCase):
 
     def test_declared_provenance_and_history_metadata_are_preserved_without_interpretation(self):
         self.write("Historical.md", "---\ntitle: Historical\nfrom: agent\nprovenance: chat-record\nadoption: unadopted\ndate: 2026-08-01\naliases: [Former title]\n---\nAn old interpretation.\n")
-        result = self.nominate(named=["Historical.md", "Former title"])
+        result = self.nominate(named=["Historical.md"])
         source = result["records"][0]
         self.assertEqual(source["declared"], {
             "title": "Historical", "from": "agent", "provenance": "chat-record",
             "adoption": "unadopted", "date": "2026-08-01", "aliases": "[Former title]"})
         self.assertIn("not interpreted", source["metadata_representation"])
-        self.assertEqual(result["channels"]["named"][1]["status"], "unresolved")
 
     def test_expected_ranked_capability_failure_preserves_named_sources_and_each_failed_facet(self):
         for failure in (SystemExit("STOP: no retrieval index"), ImportError("no optional model"),

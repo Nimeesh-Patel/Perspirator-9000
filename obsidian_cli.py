@@ -1,29 +1,16 @@
-#!/usr/bin/env python3
-"""Bounded, read-only Obsidian CLI context for Perspirator mechanisms.
+"""Native Obsidian link evidence for ranked retrieval and guarded renames.
 
 This is one capability adapter, not retrieval policy. It preserves the exact
 vault-relative ``path=`` contract and returns explicit unavailability instead
 of silently confusing a closed app or stale CLI index with an empty result.
 """
 
-import argparse
 import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
-
-from adapters import add_vault_argument
-
-READ_ONLY = {
-    "aliases", "backlinks", "base:query", "bases", "deadends", "file",
-    "files", "folder", "folders", "help", "history", "history:list",
-    "history:read", "links", "orphans", "outline", "properties",
-    "property:read", "read", "recents", "search", "search:context",
-    "sync:history", "sync:read", "sync:status", "tags", "tasks",
-    "unresolved", "vault", "vaults", "version", "wordcount",
-}
 
 
 def default_executable():
@@ -65,7 +52,7 @@ def parsed(stdout):
         return lines
 
 
-def cli_error(stdout, raw_note=False):
+def cli_error(stdout):
     """Recognize diagnostics Obsidian can print even on exit zero."""
     message = stdout.strip()
     lower = message.lower()
@@ -73,9 +60,7 @@ def cli_error(stdout, raw_note=False):
         return "unavailable", message
     if lower == "vault not found.":
         return "unavailable", message
-    if lower.startswith("error: ") and (
-        not raw_note or lower.startswith('error: file "') and lower.endswith('" not found.')
-    ):
+    if lower.startswith("error: "):
         return "error", message
     return None
 
@@ -103,10 +88,7 @@ class ObsidianCLI:
                     "data": [], "error": f"{type(exc).__name__}: {exc}"}
         stdout = completed.stdout or ""
         stderr = (completed.stderr or "").strip()
-        # A note body can itself start with "Error:". The raw read commands
-        # can return that text as data, as well as an exact missing-file error.
-        raw_note = argv[2] in {"read", "history:read", "sync:read"}
-        diagnostic = cli_error(stdout, raw_note=raw_note)
+        diagnostic = cli_error(stdout)
         if diagnostic:
             status, error = diagnostic
             return {"ok": False, "status": status, "argv": argv,
@@ -146,25 +128,23 @@ class ObsidianCLI:
             self._probe = result
         return result
 
-    def command(self, name, **options):
-        """Run one whitelisted read command without a shell."""
-        if name not in READ_ONLY:
-            raise ValueError(f"not a read-only Obsidian command: {name}")
+    def path_command(self, name, path, **options):
+        """Read links or backlinks from the verified vault."""
+        if name not in {"links", "backlinks"}:
+            raise ValueError(f"not an Obsidian link command: {name}")
+        rel = exact_path(path)
         probe = self.probe()
         if not probe["ok"]:
             return probe
-        argv = [self.executable, f"vault={self.vault_name}", name]
+        argv = [self.executable, f"vault={self.vault_name}", name, f"path={rel}"]
         for key, value in options.items():
             if value is None or value is False:
                 continue
             argv.append(key if value is True else f"{key}={value}")
         return self._run(argv)
 
-    def path_command(self, name, path, **options):
-        return self.command(name, path=exact_path(path), **options)
-
     def note_context(self, path):
-        """Links, backlinks, and properties for an exact note path."""
+        """Links and backlinks for an exact note path."""
         rel = exact_path(path)
         if rel in self._context_cache:
             return self._context_cache[rel]
@@ -175,7 +155,6 @@ class ObsidianCLI:
         calls = {
             "backlinks": self.path_command("backlinks", rel, format="json"),
             "links": self.path_command("links", rel),
-            "properties": self.path_command("properties", rel, format="json"),
         }
         failed = next((result for result in calls.values() if not result["ok"]), None)
         if failed:
@@ -190,7 +169,6 @@ class ObsidianCLI:
             "provider": "obsidian", "status": "ok", "path": rel,
             "backlinks": list(backlinks)[:self.limit],
             "links": list(links)[:self.limit],
-            "properties": calls["properties"]["data"],
             "coverage": {
                 "scope": "received-provider-response", "limit": self.limit,
                 "received": {"links": len(links), "backlinks": len(backlinks)},
@@ -200,56 +178,3 @@ class ObsidianCLI:
         }
         self._context_cache[rel] = result
         return result
-
-    def search(self, query, path=None, context=False):
-        options = {"query": query, "limit": self.limit, "format": "json"}
-        if path:
-            options["path"] = exact_path(path)
-        return self.command("search:context" if context else "search", **options)
-
-    def base_query(self, path, view=None):
-        return self.path_command("base:query", path, view=view, format="json")
-
-    def vault_shape(self):
-        """Bounded graph-health evidence, separate from semantic ranking."""
-        return {name: self.command(name, total=True)
-                for name in ("orphans", "deadends", "unresolved")}
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    add_vault_argument(parser)
-    parser.add_argument("--timeout", type=float, default=5)
-    parser.add_argument("--limit", type=int, default=5)
-    sub = parser.add_subparsers(dest="action", required=True)
-    context = sub.add_parser("context")
-    context.add_argument("path")
-    search = sub.add_parser("search")
-    search.add_argument("query")
-    search.add_argument("--path")
-    search.add_argument("--context", action="store_true")
-    base = sub.add_parser("base-query")
-    base.add_argument("path")
-    base.add_argument("--view")
-    sub.add_parser("vault-shape")
-    args = parser.parse_args()
-
-    cli = ObsidianCLI(args.vault, timeout=args.timeout, limit=args.limit)
-    if args.action == "context":
-        result = cli.note_context(args.path)
-        ok = result["status"] == "ok"
-    elif args.action == "search":
-        result = cli.search(args.query, args.path, args.context)
-        ok = result["ok"]
-    elif args.action == "base-query":
-        result = cli.base_query(args.path, args.view)
-        ok = result["ok"]
-    else:
-        result = cli.vault_shape()
-        ok = all(item["ok"] for item in result.values())
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if ok else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

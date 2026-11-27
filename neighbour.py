@@ -533,7 +533,7 @@ def filesystem_context(vault, note, refs, limit):
     if text is None:
         return {"provider": "filesystem", "status": "unavailable", "path": note,
                 "error": f"cannot read exact note: {path}",
-                "links": [], "backlinks": [], "properties": {},
+                "links": [], "backlinks": [],
                 "coverage": {"scope": "unobserved", "limit": limit}}
     stem = path.stem
     backlinks = sorted(p.relative_to(vault).as_posix()
@@ -547,7 +547,6 @@ def filesystem_context(vault, note, refs, limit):
                      "observed": {"links": len(links), "backlinks": len(backlinks)},
                      "omitted": {"links": max(0, len(links) - limit),
                                  "backlinks": max(0, len(backlinks) - limit)}},
-        "properties": frontmatter_fields(text),
     }
 
 
@@ -593,10 +592,7 @@ def expand_graph(vault, results, config, mode, get_refs, cli=None):
         contexts.append(context)
     failures = [context for context in contexts if context["status"] != "ok"]
     if not failures:
-        return {"provider": "obsidian", "status": "ok", "notes": contexts,
-                "capabilities": ["links", "backlinks", "properties", "search",
-                                 "search:context", "base:query", "orphans",
-                                 "deadends", "unresolved"]}
+        return {"provider": "obsidian", "status": "ok", "notes": contexts}
     if config["graph"]["fallback"] == "filesystem":
         expanded = []
         for note, context in zip(notes, contexts):

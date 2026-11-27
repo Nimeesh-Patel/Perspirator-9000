@@ -343,17 +343,12 @@ class ContractSuite(unittest.TestCase):
                     return Completed('[{"file":"source.md"}]')
                 if command == "links":
                     return Completed("target one.md\ntarget two.md\n")
-                if command == "properties":
-                    return Completed('{"type":"Problem"}')
-                if command == "search":
-                    return Completed('["a.md"]')
                 return Completed("")
 
             cli = ObsidianCLI(root, executable="obsidian", runner=fake_runner, limit=1)
             context = cli.note_context("folder/note.md")
             self.assertTrue(context["backlinks"] == ["source.md"]
-                  and context["links"] == ["target one.md"]
-                  and context["properties"] == {"type": "Problem"}, ("CLI context combines links backlinks and properties", str(context)))
+                  and context["links"] == ["target one.md"], ("CLI context combines links and backlinks", str(context)))
             command_calls = [(argv, kwargs) for argv, kwargs in calls
                              if not command_is_probe(argv)]
             self.assertTrue(calls[0][0] == ["obsidian", f"vault={root.name}", "vault", "info=path"], ("CLI probes the exact vault path before path commands", str(calls[0])))
@@ -364,8 +359,9 @@ class ContractSuite(unittest.TestCase):
                 return Completed("")
             wrong = ObsidianCLI(root, runner=other_vault_runner).note_context("n.md")
             self.assertTrue(wrong["status"] == "wrong-vault", ("CLI refuses context when another vault is open", str(wrong)))
-            self.assertTrue(all("path=folder/note.md" in argv for argv, _ in command_calls[:3])
-                  and all(kwargs["shell"] is False for _, kwargs in command_calls[:3]), ("CLI targets exact path and never invokes a shell", str(command_calls[:3])))
+            self.assertEqual([argv[2] for argv, _ in command_calls], ["backlinks", "links"])
+            self.assertTrue(all("path=folder/note.md" in argv for argv, _ in command_calls)
+                  and all(kwargs["shell"] is False for _, kwargs in command_calls), ("CLI targets exact path and never invokes a shell", str(command_calls)))
             cached_call_count = len(calls)
             self.assertTrue(cli.note_context("folder/note.md") == context
                   and len(calls) == cached_call_count, "CLI context cache avoids repeated subprocesses")
@@ -379,8 +375,6 @@ class ContractSuite(unittest.TestCase):
                     return Completed('Error: File "retry.md" not found.')
                 if command == "backlinks":
                     return Completed("[]")
-                if command == "properties":
-                    return Completed("{}")
                 return Completed("")
 
             flaky = ObsidianCLI(root, runner=flaky_runner)
@@ -388,9 +382,6 @@ class ContractSuite(unittest.TestCase):
             second_context = flaky.note_context("retry.md")
             self.assertTrue(first_context["status"] == "error"
                   and second_context["status"] == "ok", ("failed path context stays retryable within the session", str(second_context)))
-            searched = cli.search("knowledge growth", path="memory")
-            self.assertTrue(searched["data"] == ["a.md"]
-                  and "limit=1" in calls[-1][0], ("generic CLI adapter exposes bounded search", str(calls[-1])))
             try:
                 exact_path("../outside.md")
                 self.assertTrue(False, ("exact paths reject traversal", "no ValueError"))
@@ -406,7 +397,7 @@ class ContractSuite(unittest.TestCase):
                         return {"provider": "obsidian", "status": "unavailable",
                                 "path": note, "error": "timed out"}
                     return {"provider": "obsidian", "status": "ok", "path": note,
-                            "backlinks": [], "links": [], "properties": {}}
+                            "backlinks": [], "links": []}
 
             graph_results = [{"note": "a.md"}, {"note": "c.md"}]
             mixed = nb.expand_graph(root, graph_results, config, "obsidian", dict,

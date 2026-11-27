@@ -45,10 +45,10 @@ detailed interface.
 bounded native providers.
 
 `role_harness.py` discovers roles and prepares exact, bounded handoffs;
-`context_query.py nominate` brings together exact note paths, native Obsidian
-queries (`--search`), and neighbour facets (`--text`) for original-source
-reading. Search-only and named-only runs need no embedding index. Their vault
-role instructions own interpretation.
+`context_query.py nominate` checks exact note paths (`--named`) and proposes
+neighbours for question facets (`--text`). Use Obsidian directly for native
+search and pass selected result paths to Perspirator when a task needs
+source identity or a role packet. Exact paths need no embedding index.
 
 Local agents use the shared tools directly. Reinstall an adapter when its
 template changes or either directory moves.
