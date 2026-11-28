@@ -227,5 +227,39 @@ status: draft
                 nc.read_note(path)
 
 
+class UnitFormationTests(unittest.TestCase):
+    def units(self, name, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / name
+            path.write_text(text, encoding="utf-8")
+            return nc.chunks_for_note(path, root)
+
+    def test_a_title_only_note_is_found_by_its_title(self):
+        units = self.units("Magna Carta.md", "---\ncategory: Institutions\n---\n\n***\n\n")
+        self.assertEqual([(u["unit"], u["strategy"], u["text"]) for u in units],
+                         [("problem_identity", "title-as-problem", "Magna Carta")])
+        self.assertEqual(units[0]["start"], units[0]["end"])
+
+    def test_a_written_problem_side_still_owns_the_identity(self):
+        units = self.units("woke.md", "How does woke work?\n***\nBy replication.\n")
+        self.assertEqual(units[0]["strategy"], nc.FORMATION["problem"])
+        self.assertEqual(units[0]["text"], "How does woke work?")
+
+    def test_embedded_image_data_is_neither_counted_nor_embedded(self):
+        payload = "iVBORw0KGgo" + "A" * 200000
+        text = f"# Reviews page\n\nThe summary card.\n\n![](data:image/png;base64,{payload})\n"
+        units = self.units("PRD.md", text)
+        self.assertTrue(all(len(u["text"]) < 200 and payload[:80] not in u["embedding_text"]
+                            for u in units))
+        unit = next(u for u in units if "base64" in u["text"])
+        self.assertIn("![](data:image/png;base64,\u2026)", unit["text"])
+        self.assertNotIn(payload[:80], unit["embedding_text"])
+        # Provenance still spans the real source, image included.
+        self.assertGreater(unit["end"] - unit["start"], len(payload))
+        # A short payload is ordinary text, not an embedded file.
+        self.assertEqual(nc.without_inline_data("data:text/plain;base64,QQ=="),
+                         "data:text/plain;base64,QQ==")
+
 if __name__ == "__main__":
     unittest.main()

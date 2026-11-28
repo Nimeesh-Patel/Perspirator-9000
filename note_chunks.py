@@ -45,6 +45,10 @@ FORMATION = {
     "non-problem": "authored-blocks",
     "oversize": "authored-boundaries-then-token-windows",
     "embedding-oversize": "mean-pooled-token-windows",
+    # Declared so an index formed under older rules refuses to refresh
+    # rather than keep units these rules would no longer form.
+    "empty-problem": "title-as-problem",
+    "embedded-data": "payload-replaced-before-counting",
 }
 
 
@@ -308,6 +312,18 @@ def _blocks(body):
     return blocks
 
 
+# An embedded image or file (``data:<type>;base64,...``) is bytes, not prose.
+# Counted and embedded as text it dominated a note's units (one 2.4 MB note
+# formed a 512,607-character unit and stalled every index refresh) while
+# offering nothing a question could match. Units keep their source offsets and
+# lose only the payload, so provenance still points at the real span.
+INLINE_DATA = re.compile(r"(data:[\w.+-]+/[\w.+-]+;base64,)[A-Za-z0-9+/=]{64,}")
+
+
+def without_inline_data(text):
+    return INLINE_DATA.sub("\\1\u2026", text) if text else text
+
+
 def rough_token_length(text):
     """Deterministic fallback used outside the embedding runtime."""
     return len(re.findall(r"\w+|[^\w\s]", text, re.UNICODE)) + 2
@@ -323,6 +339,8 @@ def _trimmed_span(full_text, start, end):
 def _unit(path, vault_root, text, start, end, side, unit, strategy,
           heading=None, embedding_text=None):
     rel = path.relative_to(vault_root).as_posix()
+    text = without_inline_data(text)
+    embedding_text = without_inline_data(embedding_text)
     return {
         "note": rel,
         "stem": path.stem,
@@ -458,7 +476,10 @@ def chunks_for_note(path, vault_root, text=None, max_tokens=DEFAULT_MAX_TOKENS,
         return []
     parsed = parse_note(text)
     normalized = parsed["normalized"]
-    token_length = token_length or rough_token_length
+    count = token_length or rough_token_length
+
+    def token_length(value):
+        return count(without_inline_data(value))
 
     if parsed["has_separator"]:
         identity = parsed["problem"] or ""
@@ -468,6 +489,13 @@ def chunks_for_note(path, vault_root, text=None, max_tokens=DEFAULT_MAX_TOKENS,
                              parsed["problem_start"], parsed["problem_end"],
                              "problem", "problem_identity", FORMATION["problem"],
                              embedding_text=f"{path.stem}\n{identity}"))
+        else:
+            # Titles have become the questions, so an empty problem side
+            # leaves the title as the note's problem. Its span is empty
+            # because the title is not part of the body.
+            out.append(_unit(path, vault_root, path.stem,
+                             parsed["problem_start"], parsed["problem_start"],
+                             "problem", "problem_identity", "title-as-problem"))
         out.extend(_conjecture_units(path, vault_root, parsed, identity,
                                      max_tokens, token_length))
         return out
