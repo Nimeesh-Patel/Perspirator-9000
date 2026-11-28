@@ -23,7 +23,6 @@ def check(label, ok, detail=""):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from note_chunks import frontmatter_fields, read_note  # noqa: E402,F401
 from policy_index import active_policy_surface  # noqa: E402
-from artifact_lifecycle import lifecycle_problems, load_lifecycle  # noqa: E402
 from contract_copy import validate_contract_copies  # noqa: E402
 from installation import manifest_problems  # noqa: E402
 
@@ -64,16 +63,6 @@ def validate_vault(vault):
               f"{len(policies)} policies")
     except ValueError as exc:
         check("active policy surface is well formed", False, str(exc))
-
-    try:
-        lifecycle = load_lifecycle(vault)
-        problems = lifecycle_problems(vault, lifecycle)
-        check("artifact lifecycle declaration is well formed", True,
-              f"{len(lifecycle)} roles")
-        check("declared artifact lifecycles have no mechanical violation",
-              not problems, "; ".join(problems[:4]))
-    except ValueError as exc:
-        check("artifact lifecycle declaration is well formed", False, str(exc))
 
 
 NOT_SHIPPED = {"install.py"}

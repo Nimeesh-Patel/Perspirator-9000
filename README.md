@@ -130,14 +130,11 @@ the shared checkout.
 
 - [SKILL.md](SKILL.md) — minimal host-neutral locator template;
 - [install.py](install.py) and [adapters.py](adapters.py) — generated host packaging;
-- [doctor.py](doctor.py) — runtime, contract, lifecycle, and entry-point validation;
+- [doctor.py](doctor.py) — runtime, contract, and entry-point validation;
 - [role_harness.py](role_harness.py) — small role discovery surface, bounded exact
   handoff snapshots and response identity/freshness checks;
 - [context_query.py](context_query.py) — task-derived, identity-labelled vault
   nominations using the shared batch rankers and original source readback;
-- [artifact_lifecycle.py](artifact_lifecycle.py) — read-only inventory of explicitly
-  selected declared artifact trees and path/type/pattern checks; hashes and
-  metadata inform retention decisions owned by the vault policies;
 - [contracts.py](contracts.py) — shared minimal provider/source boundaries; and
 - each tool's `--help` plus its tests — canonical executable interface.
 

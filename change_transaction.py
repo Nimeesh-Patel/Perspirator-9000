@@ -4,7 +4,7 @@
 Callers decide *what* a change means.  This module owns the invariant a guarded
 rename needs: record the exact pre-state, refuse a stale plan, classify an
 ambiguous outcome, and emit enough metadata to reverse the move without
-guessing.  ``file_state`` also serves read-only lifecycle observation.
+guessing.
 """
 
 import hashlib
@@ -19,18 +19,14 @@ def sha256_file(path):
     return sha256_bytes(Path(path).read_bytes())
 
 
-def file_state(path, include_bytes=False):
+def file_state(path):
     path = Path(path)
     if not path.exists():
         return {"exists": False, "sha256": None, "bytes": None}
     if not path.is_file():
         raise ValueError(f"transaction target is not a file: {path}")
     payload = path.read_bytes()
-    state = {"exists": True, "sha256": sha256_bytes(payload),
-             "size": len(payload)}
-    if include_bytes:
-        state["bytes"] = payload
-    return state
+    return {"exists": True, "sha256": sha256_bytes(payload), "size": len(payload)}
 
 
 def identity_operation(old_path, new_path, *, reason=None):
